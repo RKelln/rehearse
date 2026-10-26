@@ -63,6 +63,12 @@ class Case:
     scenario_dir: Path | None = None         # agent subject: the folder copied for each run
     scenario_exclude: list[str] = field(default_factory=list)   # globs, relative to the scenario folder
     subject_options: dict = field(default_factory=dict)         # agent: "tools" and "permission_mode"
+    rubric_path: Path | None = None          # the case's rubric.md, if it has one
+    rubric: dict | None = None               # that file, parsed (see judge.parse_rubric)
+    answer_key_path: Path | None = None
+    judge_seat: str | dict | None = None
+    judge_default: bool = False              # judge every run right after its checks
+    mock_judge: list[str] = field(default_factory=list)
 
     def frame_text(self) -> str:
         """The sim frame: the case's own file, else the one shipped with the tool."""
@@ -220,11 +226,40 @@ def load_case(path: str | Path) -> Case:
         if not checks_path.is_file():
             raise CaseError(f"checks file not found: {checks_rel}")
 
+    rubric_path = rubric = answer_key_path = judge_seat = None
+    rubric_rel = _text(data, "rubric", "case.toml")
+    if rubric_rel:
+        from .judge import parse_rubric       # judge.py imports this module
+        rubric_path = root / rubric_rel
+        if not rubric_path.is_file():
+            raise CaseError(f"rubric file not found: {rubric_rel}")
+        rubric = parse_rubric(rubric_path.read_bytes().decode(), rubric_rel)
+    key_rel = _text(data, "answer_key", "case.toml")
+    if key_rel:
+        answer_key_path = root / key_rel
+        if not answer_key_path.is_file():
+            raise CaseError(f"answer key not found: {key_rel}")
+    if rubric and rubric["answer_key"] and not answer_key_path:
+        raise CaseError("the rubric asks to show the answer key to the judge, but case.toml has no answer_key")
+    judge = _table(data, "judge", required=False)
+    for key in judge:
+        if key not in ("seat", "default"):
+            raise CaseError(f"unknown setting {key!r} in [judge]; the settings are: seat, default")
+    judge_default = judge.get("default", False)
+    if not isinstance(judge_default, bool):
+        raise CaseError("[judge] default must be true or false")
+    if judge:
+        judge_seat = _seat(judge, "[judge]")
+    if judge_default and not (rubric and judge_seat):
+        raise CaseError("[judge] default = true needs a rubric and a judge seat")
+
     mock = _table(data, "mock", required=False)
     return Case(name=name, root=root, runs_dir=runs_dir, adapter=adapter, subject_seat=subject_seat,
                 opening=opening, stop_pattern=stop_pattern, variants=variants, sim_seat=sim_seat,
                 sims=sims, frame_path=frame_path, max_turns=max_turns,
-                mock_subject=_replies(mock, "subject"), mock_sim=_replies(mock, "sim"), checks_path=checks_path,
+                mock_subject=_replies(mock, "subject"), mock_sim=_replies(mock, "sim"), mock_judge=_replies(mock, "judge"),
+                rubric_path=rubric_path, rubric=rubric, answer_key_path=answer_key_path,
+                judge_seat=judge_seat, judge_default=judge_default, checks_path=checks_path,
                 allowed_tools=allowed_tools, scenario_dir=scenario_dir, scenario_exclude=exclude,
                 subject_options=options)
 

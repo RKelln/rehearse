@@ -81,6 +81,16 @@ class Spend:
         self.calls = {s: 0 for s in SEATS}
         self.unknown = {s: 0 for s in SEATS}
         self.mock = {s: False for s in SEATS}
+        self.judge_usd = 0.0
+        self.judge_calls = 0
+        self.judge_unknown = 0
+
+    def add_judge(self, cost_usd: float | None) -> None:
+        self.judge_calls += 1
+        if cost_usd is None:
+            self.judge_unknown += 1
+        else:
+            self.judge_usd += cost_usd
 
     def add(self, cost: dict, mock_seats: dict | None = None) -> None:
         for seat in SEATS:
@@ -93,7 +103,7 @@ class Spend:
 
     @property
     def total(self) -> float:
-        return sum(self.usd.values())
+        return sum(self.usd.values()) + self.judge_usd
 
     def line(self) -> str:
         parts = []
@@ -110,4 +120,8 @@ class Spend:
             else:
                 text = f"${self.usd[seat]:.4f}"
             parts.append(f"{seat} {text}")
+        if self.judge_calls:
+            known = self.judge_calls - self.judge_unknown
+            parts.append("judge " + ("unknown" if known <= 0 else f"${self.judge_usd:.4f}"
+                                     + (f" + unknown for {self.judge_unknown} calls" if self.judge_unknown else "")))
         return "spent: " + ", ".join(parts)

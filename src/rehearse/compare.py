@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 
-from .board import N_MEANS, SIM_CHECK, Record, cell_text, exclusions, load_records, scrub, tally
+from .board import N_MEANS, SIM_CHECK, Record, _judge_names, cell_text, exclusions, load_records, scrub, tally
 
 FOOTER = "Small counts move by chance. Rerun before believing a change of one or two."
 
@@ -82,7 +82,7 @@ def render(before: list[Record], after: list[Record]) -> str:
         b = [r for r in before if (r.case, r.variant, r.sim) == (case, variant, sim)]
         a = [r for r in after if (r.case, r.variant, r.sim) == (case, variant, sim)]
         names = list(dict.fromkeys(
-            [x["name"] for r in b + a for x in (r.checks or {}).get("results", [])] + [SIM_CHECK]))
+            [x["name"] for r in b + a for x in (r.checks or {}).get("results", [])] + [SIM_CHECK] + _judge_names(b + a)))
         for name in names:
             tb, ta = tally(b, name), tally(a, name)
             if _same_denominator(tb, ta):

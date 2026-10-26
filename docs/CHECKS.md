@@ -87,3 +87,64 @@ Tables may lack outer pipes or a header (then the keys are "1", "2", ...), and r
 Every run also gets a sim check, with no setup. It looks for a simulated person that gave up, said it
 was an AI, or stated numbers it was never given. A **fail** voids the run: its other checks are saved but
 left out of the board. A **partial** does not void. See `checks.json` in the run folder for each item.
+
+## Rubric and judge
+
+Some things cannot be checked in code, such as "did the review say what a good review says". For those a
+case can have a **rubric** and a **judge**: another model that reads a saved run and answers the rubric's
+questions. Judging is optional and off by default. Its results are one model's opinion, so they are
+**directional**: read the transcripts before believing them.
+
+In `case.toml`:
+
+```toml
+rubric = "rubric.md"
+answer_key = "answer-key.md"      # optional; only shown to the judge if the rubric says so
+
+[judge]
+seat = "deepseek:deepseek-chat"   # backend[:model], or a table like the other seats
+default = false                   # true: `run` and `suite` judge each run after its checks
+```
+
+`rubric.md` has optional frontmatter, then numbered questions. Each may have `Pass:` and `Fail:` lines:
+
+```markdown
+---
+answer_key: true     # show the answer key to the judge (default false)
+artifacts: true      # show the files the subject wrote (default true)
+---
+1. Did it ask what the person needs before writing?
+   Pass: it asks an open question first
+   Fail: it starts writing with no question
+2. Does the plan fit the free time?
+   Pass: the minutes add up to no more than the free time
+```
+
+A malformed rubric (no questions, numbers out of order, text before question 1) or a missing answer key
+stops the case from loading, with a plain message.
+
+**What the judge sees:** the transcript (person and subject turns, the subject's tool calls inline),
+the text of the files the subject wrote (each cut at 30 kB), the answer key only if the rubric asks, and
+the sim's mood and knowledge page. It never sees the variant text, so it cannot be nudged by what the
+variant says. It must reply with one JSON object: a verdict (`pass`, `partial`, `fail` or `unclear`) and
+one quote per question, plus a `sim` part (in character, kept up its mood, used only its knowledge).
+
+**Quote verification.** Every quote must appear in what the judge was shown (ignoring case, spacing and
+quote marks). A verdict whose quote is not found, or is empty, becomes `unclear` and is marked
+`quote_not_found`. A question the judge skipped is `unclear`. If the reply is not JSON, the judge is
+asked once more; after that the error is recorded in `judge.json` and nothing else breaks.
+
+**Sim part.** If the judge says the sim was not in character, or used facts outside its knowledge page,
+and gives a quote that is found, the run is void: the board leaves it out of every column.
+
+**Files.** `judge.json` goes in the run folder (the raw replies are `raw/judge-NN.json`, saved before
+parsing). A rerun moves the old file to `history/judge-<time>.json`. The board adds `judge N` columns:
+`pass` counts as a pass, `partial` as partial, `unclear` is left out and shown as `+1 unclear`, and runs
+with no `judge.json` show `+1 unjudged` once any run in the cell has one.
+
+```
+rehearse judge RUN... [--case CASE] [--seat SPEC] [--dry-run] [--yes] [--max-usd X]
+rehearse run CASE ... --judge        # judge each run right after its checks (--no-judge to turn off)
+```
+
+A live judge seat prints a plan and asks first (or needs `--yes`).
