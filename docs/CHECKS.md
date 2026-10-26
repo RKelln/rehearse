@@ -57,10 +57,10 @@ message, and the other checks still run. An `error` is left out of the total and
 | `run.subject_turns`, `run.person_turns` | the texts only, in order (the person's list starts with the opening line) |
 | `run.transcript` | `transcript.md` as text |
 | `run.tool_calls` | every tool call the subject made (empty for a chat subject) |
-| `run.artifact(name)`, `run.artifacts` | a file the subject wrote, as text or None; the folder |
-| `run.diff` | `{"added": [], "changed": [], "removed": []}` for the subject's folder |
+| `run.artifact(name)`, `run.artifacts` | a file the subject added or changed (by its path in the work folder), as text or None; the `artifacts` folder |
+| `run.diff` | `{"added": [], "changed": [], "removed": []}` for the subject's folder. An entry is a path, or a dict with a `"path"` and a note: `"symlink_to"`, `"mode"`, `"scrubbed"` or `"withheld"` |
 | `run.knowledge` | the sim's knowledge page |
-| `run.scenario_file(rel)` | a file from the case's scenario, or None |
+| `run.scenario_file(rel)` | a file from the case's scenario folder (the original, not the work copy), or None |
 
 Each check gets its own copy of the run, so one check cannot change what another sees.
 

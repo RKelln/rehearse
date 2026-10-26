@@ -9,14 +9,16 @@ its own state (a session id, a folder copy), so the loop only calls `reply`.
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 
 from .backends import Backend, BackendError, Msg, SeatResult
 
 
-def require(backend: Backend, capability: str) -> None:
+def require(backend: Backend, capability: str, doing: str = "") -> None:
     """Fail early and plainly if a backend cannot fill a seat."""
     if capability not in backend.capabilities:
-        raise BackendError(f"backend {backend.describe()!r} cannot do {capability!r}")
+        what = f"cannot {doing} (it lacks {capability!r})" if doing else f"cannot do {capability!r}"
+        raise BackendError(f"backend {backend.describe()} {what}")
 
 
 def subject_messages(turns) -> list[Msg]:
@@ -43,6 +45,9 @@ class ChatAdapter:
         self.system = system
         self.last_request: dict = {}
 
+    def close(self) -> None:
+        pass
+
     def reply(self, turns) -> SeatResult:
         """Send the subject the transcript so far and return its reply."""
         messages = subject_messages(turns)
@@ -50,8 +55,46 @@ class ChatAdapter:
         return self.backend.chat(self.system, messages)
 
 
-def make_adapter(name: str, backend: Backend, variant_text: str) -> ChatAdapter:
+class AgentAdapter:
+    """The subject is an agent working in a folder. It keeps its own session across turns.
+
+    The agent already remembers the conversation, so each turn sends only the person's newest
+    message. The session is started on the first reply.
+    """
+
+    def __init__(self, backend: Backend, workdir: Path, allowed_tools: list[str] | None = None,
+                 options: dict | None = None):
+        require(backend, "agent", "run an agent subject")
+        require(backend, "resume", "run an agent subject")
+        self.backend = backend
+        self.workdir = Path(workdir)
+        self.allowed_tools = allowed_tools
+        self.options = options or {}
+        self.session = None
+        self.last_request: dict = {}
+
+    def reply(self, turns) -> SeatResult:
+        """Send the agent the person's newest message and return its reply."""
+        message = turns[-1].text
+        self.last_request = {"message": message, "allowed_tools": self.allowed_tools,
+                             "session_id": self.session.session_id if self.session else None}
+        if self.session is None:
+            self.session = self.backend.open_session(self.workdir, allowed_tools=self.allowed_tools,
+                                                     options={**(getattr(self.backend, "spec", None) or {}), **self.options})
+        return self.session.send(message)
+
+    def close(self) -> None:
+        if self.session is not None:
+            self.session.close()
+
+
+def make_adapter(name: str, backend: Backend, variant_text: str = "", *, workdir=None,
+                 allowed_tools=None, options=None):
     """Build the adapter a case names."""
     if name == "chat":
         return ChatAdapter(backend, variant_text)
-    raise ValueError(f"adapter {name!r} is not built yet; only 'chat' exists")
+    if name == "agent":
+        if workdir is None:
+            raise ValueError("the agent adapter needs a work folder")
+        return AgentAdapter(backend, workdir, allowed_tools, options)
+    raise ValueError(f"adapter {name!r} is not built yet; the adapters are 'chat' and 'agent'")

@@ -105,7 +105,7 @@ def _call(out: Outcome, seat: str, do, request) -> tuple[SeatResult, str]:
     except Exception as e:      # a backend may fail in any way; the run must still be saved
         error = e
         msg = str(e) if isinstance(e, BackendError) else f"{type(e).__name__}: {e}"
-        res = SeatResult(text="", error=msg)
+        res = SeatResult(text="", error=msg, raw=getattr(e, "raw", None))
     out.calls.append({"seat": seat, "index": index, "file": name, "request": request(),
                       "result": asdict(res)})
     if error is not None:

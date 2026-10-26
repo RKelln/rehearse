@@ -1,6 +1,6 @@
 # Plan
 
-Status: approved 2026-10-26 for steps 1 and 2. Later steps need approval before they start.
+Status: steps 1 to 3 built. Later steps need approval before they start.
 
 This plan builds the tool described in [`DESIGN.md`](DESIGN.md) in small steps. Each step ends with
 passing tests on the `mock` backend (a scripted stand-in for a model, so no model is called and

@@ -29,6 +29,22 @@ _MONTH_DAY = re.compile(r"\b(" + "|".join(_MONTHS) + r")[a-z]*\.?\s+(\d{1,2})(?:
                         + "|".join(_MONTHS) + r")[a-z]*\b", re.I)
 _TIME = re.compile(r"\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\b\.?|\b(\d{1,2}):(\d{2})\b", re.I)
 _NUMBER = re.compile(r"\d+(?:[.,:/]\d+)*")
+_UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
+          "fifteen sixteen seventeen eighteen nineteen").split()
+_TENS = {w: 10 * i for i, w in enumerate("_ _ twenty thirty forty fifty sixty seventy eighty ninety".split()) if i >= 2}
+_WORD_NUMBER = re.compile(r"\b(" + "|".join(_TENS) + r")(?:[- ](" + "|".join(_UNITS[1:10]) + r"))?\b|\b("
+                          + "|".join(_UNITS) + r")\b", re.I)
+
+
+def _word_numbers(text: str) -> set[str]:
+    """Numbers written as words: "nine to five" makes 9 and 5 known; "twenty-five" makes 25."""
+    out = set()
+    for m in _WORD_NUMBER.finditer(text):
+        if m.group(3):
+            out.add(str(_UNITS.index(m.group(3).lower())))
+        else:
+            out.add(str(_TENS[m.group(1).lower()] + (_UNITS.index(m.group(2).lower()) if m.group(2) else 0)))
+    return out
 
 
 def _time_alternatives(m) -> set[str]:
@@ -79,7 +95,7 @@ def known_numbers(text: str) -> set[str]:
     for tok in _NUMBER.findall(text):
         known.add(tok.replace(",", "") if re.fullmatch(r"\d{1,3}(,\d{3})+", tok) else tok)
         known |= {part for part in re.split(r"[.,:/]", tok) if part}
-    return known
+    return known | _word_numbers(text)
 
 
 def _item(name, result, evidence):

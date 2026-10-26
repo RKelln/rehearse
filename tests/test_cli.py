@@ -31,7 +31,7 @@ class CliTests(CaseTest):
         code, out, _ = run_main(["suite", str(self.root), "--dry-run", "--repeats", "2"])
         self.assertEqual(code, 0)
         self.assertIn("8 runs", out)
-        self.assertIn("cost estimate: not available yet", out)
+        self.assertIn("cost estimate: none, every seat is the mock backend", out)
         self.assertIn("cheerful x sam", out)
         self.assertFalse((self.root / "runs").exists())
 

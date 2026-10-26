@@ -11,13 +11,15 @@ import hashlib
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
 from . import __version__
 from .adapters import make_adapter, require
+from .workspace import Workspace
 from .backends import Backend, make_backend
+from .backends.keys import scrub_keys
 from .case import Case
 from .loop import Outcome, run_conversation
 
@@ -47,7 +49,7 @@ def scrub(text: str) -> str:
     home = _home_pattern()
     if home:
         text = home.sub("~", text)
-    return _EMAIL.sub("[email removed]", text)
+    return scrub_keys(_EMAIL.sub("[email removed]", text))
 
 
 def scrub_obj(obj):
@@ -143,13 +145,16 @@ class RunResult:
     subject_turns: int
     mock: bool
     outcome: Outcome
+    cost: dict = field(default_factory=dict)     # per seat: {"usd", "calls", "unknown_calls"} for this run
+    mock_seats: dict = field(default_factory=dict)
 
 
 def _cost(calls: list[dict], seat: str) -> dict:
     mine = [c["result"] for c in calls if c["seat"] == seat]
     unknown = sum(1 for r in mine if r.get("cost_usd") is None)
     total = None if unknown or not mine else sum(r["cost_usd"] for r in mine)
-    return {"usd": total, "calls": len(mine), "unknown_calls": unknown}
+    known = sum(r["cost_usd"] for r in mine if r.get("cost_usd") is not None)
+    return {"usd": total, "calls": len(mine), "unknown_calls": unknown, "known_usd": known}
 
 
 def _models(calls: list[dict], seat: str) -> list[str]:
@@ -176,24 +181,49 @@ def _sha(text: str) -> str:
 
 def execute_run(case: Case, variant: str, sim: str, subject: Backend | None = None,
                 sim_backend: Backend | None = None, today: date | None = None,
-                repeat: int = 1) -> RunResult:
+                repeat: int = 1, budget_usd: float | None = None, keep_work: bool = False) -> RunResult:
     """Run one conversation and save the run folder.
 
     Raises QuotaError (with `run_path` set) or KeyboardInterrupt after saving, if either happened.
     Backends default to the ones the case names; tests may pass their own. `repeat` is this
     run's number within its suite (1 for a single run); the folder number is separate.
+    `budget_usd` is passed on to backends that can enforce it. `keep_work` keeps an agent's work
+    folder (its path is printed) instead of deleting it.
     """
     # Snapshot every input once, so what is saved is exactly what the conversation used.
     persona = case.persona(sim)
-    variant_text = case.variants[variant].read_bytes().decode()
+    overlay = case.variants[variant]
+    variant_text = overlay.read_bytes().decode() if overlay and overlay.is_file() else ""
     frame = case.frame_text()
     subject = subject or make_backend(case.subject_seat, replies=case.mock_subject, default="Tell me more.")
     sim_backend = sim_backend or make_backend(case.sim_seat, replies=case.mock_sim, default="Okay.")
     require(sim_backend, "chat")
-    adapter = make_adapter(case.adapter, subject, variant_text)
+    for backend in (subject, sim_backend):
+        backend.max_budget_usd = budget_usd
+    work = None
+    try:
+        if case.adapter == "agent":
+            work = Workspace.create(case, variant)
+            work.guard(case)
+        adapter = make_adapter(case.adapter, subject, variant_text,
+                               workdir=work.path if work else None, allowed_tools=case.allowed_tools,
+                               options=case.subject_options)
+        try:
+            out = run_conversation(case, adapter, sim_backend, persona, frame)
+        finally:
+            adapter.close()
+        return _save(case, variant, sim, repeat, today, subject, sim_backend, persona, variant_text,
+                     frame, out, work)
+    finally:
+        if work:
+            if keep_work:
+                print(f"kept work folder: {work.path}")
+            else:
+                work.cleanup()
 
-    out = run_conversation(case, adapter, sim_backend, persona, frame)
 
+def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, variant_text, frame,
+          out, work) -> RunResult:
     path, n = make_run_dir(case.runs_dir, case.name, variant, sim, today)
     seats = {"subject": subject.describe(), "sim": sim_backend.describe()}
     mock = subject.is_mock and sim_backend.is_mock
@@ -205,23 +235,36 @@ def execute_run(case: Case, variant: str, sim: str, subject: Backend | None = No
         ensure_ascii=False) for t in out.turns]
     (path / "turns.jsonl").write_text("\n".join(lines) + "\n")
     (path / "inputs").mkdir()
-    manifest = {}
-    sources = {"variant.md": variant_text, "persona.md": persona.raw, "frame.md": frame}
+    sources = {"persona.md": persona.raw, "frame.md": frame}
+    if case.adapter == "chat":
+        sources["variant.md"] = variant_text
+    elif work:
+        for rel in sorted(work.overlay):
+            sources[f"variant/{rel}"] = (case.variants[variant] / rel).read_bytes().decode("utf-8", "replace")
     if persona.knowledge_path:
         sources["knowledge.md"] = persona.knowledge_raw
+    manifest = {}
     for name, text in sources.items():
+        (path / "inputs" / name).parent.mkdir(parents=True, exist_ok=True)
         written = write_text(path / "inputs" / name, text)
         manifest[name] = {"source_sha256": _sha(text), "written_sha256": _sha(written)}
     write_json(path / "inputs" / "manifest.json", manifest)
+    if work:
+        write_json(path / "inputs" / "scenario.json",
+                   {"folder": case.scenario_dir.name if case.scenario_dir else None,
+                    "exclude": case.scenario_exclude, "files": work.scenario,
+                    "skipped_symlinks": work.skipped_symlinks, "unmatched_excludes": work.unmatched_excludes})
+        work.write_artifacts(path, scrub, write_json)
     (path / "raw").mkdir()
     for c in out.calls:
         write_json(path / "raw" / c["file"], {"request": c["request"], "result": c["result"]})
 
+    cost = {"subject": _cost(out.calls, "subject"), "sim": _cost(out.calls, "sim")}
     meta = {
         "case": case.name, "variant": variant, "sim": sim, "repeat": repeat, "folder_number": n,
-        "seats": seats,
+        "adapter": case.adapter, "seats": seats,
         "models": {"subject": _models(out.calls, "subject"), "sim": _models(out.calls, "sim")},
-        "cost": {"subject": _cost(out.calls, "subject"), "sim": _cost(out.calls, "sim")},
+        "cost": cost,
         "turns": {"subject": out.count("subject"), "person": out.count("person")},
         "max_turns": case.max_turns,
         "subject_stop_pattern": case.stop_pattern.pattern if case.stop_pattern else None,
@@ -238,7 +281,9 @@ def execute_run(case: Case, variant: str, sim: str, subject: Backend | None = No
     check_run(path, case)
     if out.quota:
         out.quota.run_path = path
+        out.quota.run_cost = cost
         raise out.quota
     if out.interrupted:
         raise KeyboardInterrupt
-    return RunResult(path, out.stop, out.count("subject"), mock, out)
+    return RunResult(path, out.stop, out.count("subject"), mock, out, cost,
+                     {"subject": subject.is_mock, "sim": sim_backend.is_mock})

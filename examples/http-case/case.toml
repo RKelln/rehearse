@@ -1,0 +1,18 @@
+# A tiny live case: a chat subject and a simulated person, both on one hosted model.
+# Needs DEEPSEEK_API_KEY in the environment, or in ~/.config/rehearse/keys (see docs/BACKENDS.md).
+name = "http-case"
+
+[subject]
+adapter = "chat"
+seat = "deepseek:deepseek-chat"
+opening = "Hi, can you help me plan my week?"
+
+[variants]
+baseline = "variants/baseline.md"
+
+[sims]
+seat = "deepseek:deepseek-chat"
+dir = "sims"
+
+[limits]
+max_turns = 3

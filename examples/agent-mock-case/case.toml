@@ -1,0 +1,31 @@
+name = "agent-mock-case"
+checks = "checks.py"
+
+[subject]
+adapter = "agent"                 # an agent working in a copy of the scenario folder
+seat = "mock"
+allowed_tools = ["Read", "Write(review.md)", "Edit(review.md)"]
+opening = "Please write my review into review.md."
+
+[scenario]
+folder = "scenario"
+exclude = ["for-people/**"]       # globs, relative to the folder; these never reach the agent
+
+[variants]
+baseline = ""                     # no overlay: the agent gets the scenario as it is
+plain = "variants/plain"          # a folder laid over the scenario copy
+
+[sims]
+seat = "mock"
+dir = "sims"
+
+[limits]
+max_turns = 4
+
+# The mock agent writes review.md on its first reply, so the folder diff has something to find.
+[mock]
+subject = [
+  { text = "I wrote review.md. Anything to change?", write = { "review.md" = "# Review\n\nAll tasks listed.\n" } },
+  "Done. Anything else?",
+]
+sim = ["Looks fine.", "DONE"]

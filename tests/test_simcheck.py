@@ -137,3 +137,11 @@ class SimCheckTests(CaseTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WordNumberTests(unittest.TestCase):
+    def test_number_words_count_as_known(self):
+        from rehearse.simcheck import known_numbers
+        known = known_numbers("Dana works nine to five, about twenty-five hours on Twelve Oak St.")
+        self.assertTrue({"9", "5", "25", "12"} <= known)
+        self.assertNotIn("2", known_numbers("someone said nothing"))

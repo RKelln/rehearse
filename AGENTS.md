@@ -3,7 +3,7 @@
 Rehearse tests an AI that talks with people by having another model play the person. The design is
 in [`docs/DESIGN.md`](docs/DESIGN.md). Read it before changing anything.
 
-Status: steps 1 and 2 built (core loop, checks, sim check, board, compare; mock backend only). See `docs/PLAN.md`.
+Status: steps 1 to 3 built (core loop, checks, sim check, board, compare, claude and http backends, agent adapter, cost).. See `docs/PLAN.md`.
 
 ## Rules for working here
 

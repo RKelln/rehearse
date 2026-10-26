@@ -5,3 +5,5 @@ __pycache__
 /runs/
 /examples/mock-case/runs/
 /.venv/
+/examples/agent-mock-case/runs/
+/examples/http-case/runs/

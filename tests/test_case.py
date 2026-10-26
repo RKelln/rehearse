@@ -26,7 +26,7 @@ class CaseTests(CaseTest):
     def test_errors_are_plain(self):
         cases = [
             ('name = "tcase"', "", "needs a 'name'"),
-            ('adapter = "chat"', 'adapter = "agent"', "not built yet"),
+            ('adapter = "chat"', 'adapter = "bogus"', "not built yet"),
             ('seat = "mock"\nopening', 'seat = "nope"\nopening', "known backends are: mock"),
             ('max_turns = 6', 'max_turns = 0', "max_turns"),
             ('[variants]', '[variants]\nghost = "variants/ghost.md"', "file not found"),
@@ -64,10 +64,10 @@ class CaseTests(CaseTest):
             self.assertIn(p, frame)
 
     def test_seat_spec(self):
-        self.assertEqual(parse_seat_spec("mock"), {"backend": "mock", "model": None})
+        self.assertEqual(parse_seat_spec("mock")["backend"], "mock")
         self.assertEqual(parse_seat_spec("mock:x")["model"], "x")
-        with self.assertRaisesRegex(BackendError, "mock"):
-            parse_seat_spec("claude:sonnet")
+        with self.assertRaisesRegex(BackendError, "known backends are: mock, claude, http"):
+            parse_seat_spec("gpt:4")
         self.assertTrue(make_backend("mock").describe().startswith("mock"))
 
 

@@ -126,7 +126,7 @@ class MetaDetailTests(CaseTest):
         subj.is_mock = False
         res = execute_run(case, "baseline", "dana", subj, MockBackend(["hi", "DONE"]), today=TODAY)
         m = json.loads((res.path / "meta.json").read_text())
-        self.assertEqual(m["cost"]["subject"], {"usd": 0.75, "calls": 2, "unknown_calls": 0})
+        self.assertEqual(m["cost"]["subject"], {"usd": 0.75, "calls": 2, "unknown_calls": 0, "known_usd": 0.75})
         self.assertIsNone(m["cost"]["sim"]["usd"])
         self.assertFalse(m["mock"])
         self.assertEqual(m["models"]["subject"], ["m1"])

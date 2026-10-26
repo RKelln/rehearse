@@ -9,7 +9,14 @@ from dataclasses import dataclass, field
 
 
 class BackendError(RuntimeError):
-    """A call failed. The run stops and records why; it is not retried silently."""
+    """A call failed. The run stops and records why; it is not retried silently.
+
+    `raw` is whatever output the backend had before it failed, so the run folder still keeps it.
+    """
+
+    def __init__(self, message: str = "", raw: object = None):
+        super().__init__(message)
+        self.raw = raw
 
 
 class QuotaError(BackendError):
@@ -42,13 +49,31 @@ class SeatResult:
     tool_calls: list[dict] = field(default_factory=list)  # agent seats: name and main argument
 
 
+class AgentSession:
+    """A conversation with an agent working in a folder. The session owns its own state."""
+
+    session_id: str | None = None
+
+    def send(self, message: str) -> SeatResult:
+        """Give the agent the next message and return its reply. Raise BackendError on failure."""
+        raise NotImplementedError
+
+    def fork(self) -> "AgentSession":
+        """A copy that continues from here without changing this one. Needs the "fork" capability."""
+        raise BackendError("this backend cannot fork a session")
+
+    def close(self) -> None:
+        """Release anything the session holds."""
+
+
 class Backend:
     """Fills a seat. Subclasses say what they can do in `capabilities`."""
 
-    # What the backend can do: any of "chat", "agent", "resume", "fork". Adapters check it
-    # (the chat adapter requires "chat").
+    # What the backend can do: any of "chat", "agent", "resume", "fork". Adapters read it:
+    # the chat adapter needs "chat"; the agent adapter needs "agent" and "resume".
     capabilities: frozenset[str] = frozenset({"chat"})
     is_mock: bool = False
+    max_budget_usd: float | None = None     # set by the runner; backends that can, pass it on
 
     def describe(self) -> str:
         """Short name for records, such as "mock" or "claude:sonnet"."""
@@ -62,3 +87,8 @@ class Backend:
         needs to know before that (such as how the chat began) goes in `system`.
         """
         raise NotImplementedError
+
+    def open_session(self, workdir, *, allowed_tools: list[str] | None = None,
+                     options: dict | None = None) -> AgentSession:
+        """Start an agent working in `workdir`. Needs the "agent" capability."""
+        raise BackendError(f"backend {self.describe()!r} cannot run an agent subject")

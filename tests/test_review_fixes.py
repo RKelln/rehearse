@@ -82,7 +82,7 @@ class BackendInterfaceTests(CaseTest):
     def test_is_mock_and_capabilities(self):
         self.assertFalse(Backend.is_mock)
         self.assertTrue(MockBackend().is_mock)
-        self.assertEqual(MockBackend().capabilities, frozenset({"chat"}))
+        self.assertEqual(MockBackend().capabilities, frozenset({"chat", "agent", "resume", "fork"}))
 
     def test_adapter_requires_chat(self):
         class NoChat(Backend):

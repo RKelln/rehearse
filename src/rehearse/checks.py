@@ -107,9 +107,19 @@ class Run:
         return self.folder / "artifacts"
 
     def artifact(self, name: str) -> str | None:
-        """Text of a file the subject wrote, or None."""
-        p = self.artifacts / name
-        return p.read_text() if p.is_file() else None
+        """Text of a file the subject added or changed (by its path in the work folder), or None."""
+        data = self.artifact_bytes(name)
+        try:
+            return None if data is None else data.decode()
+        except UnicodeDecodeError:
+            return None             # a binary file: use artifact_bytes
+
+    def artifact_bytes(self, name: str) -> bytes | None:
+        """The bytes of a file the subject added or changed, or None."""
+        for p in (self.artifacts / "files" / name, self.artifacts / name):
+            if p.is_file():
+                return p.read_bytes()
+        return None
 
     @property
     def diff(self) -> dict:
@@ -129,7 +139,7 @@ class Run:
         return self.input("knowledge.md")
 
     def scenario_file(self, rel: str) -> str | None:
-        """Text of a file in the case's scenario folder, or None. (Scenarios arrive in step 3.)"""
+        """Text of a file in the case's scenario folder, or None. Reads the original, not the work copy."""
         root = getattr(self.case, "scenario_dir", None)
         if root and (Path(root) / rel).is_file():
             return (Path(root) / rel).read_text()

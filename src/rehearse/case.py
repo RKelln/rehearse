@@ -48,17 +48,21 @@ class Case:
     root: Path
     runs_dir: Path
     adapter: str
-    subject_seat: str
+    subject_seat: str | dict
     opening: str
     stop_pattern: re.Pattern | None
-    variants: dict[str, Path]
-    sim_seat: str
+    variants: dict[str, Path | None]      # a file (chat) or a folder to overlay (agent); None = no overlay
+    sim_seat: str | dict
     sims: dict[str, Path]
     frame_path: Path | None
     max_turns: int
     mock_subject: list[str]
     mock_sim: list[str]
     checks_path: Path | None = None   # the case's checks.py, if it has one
+    allowed_tools: list[str] | None = None   # agent subject: tools allowed on the command line
+    scenario_dir: Path | None = None         # agent subject: the folder copied for each run
+    scenario_exclude: list[str] = field(default_factory=list)   # globs, relative to the scenario folder
+    subject_options: dict = field(default_factory=dict)         # agent: "tools" and "permission_mode"
 
     def frame_text(self) -> str:
         """The sim frame: the case's own file, else the one shipped with the tool."""
@@ -92,8 +96,12 @@ def _text(table: dict, key: str, where: str, required: bool = False) -> str:
     return value
 
 
-def _seat(table: dict, where: str) -> str:
-    seat = _text(table, "seat", where, required=True)
+def _seat(table: dict, where: str):
+    seat = table.get("seat")
+    if isinstance(seat, dict):
+        pass
+    elif not isinstance(seat, str) or not seat.strip():
+        raise CaseError(f"{where} needs a 'seat', such as \"mock\" or {{ backend = \"http\", ... }}")
     try:
         parse_seat_spec(seat)
     except BackendError as e:
@@ -101,10 +109,15 @@ def _seat(table: dict, where: str) -> str:
     return seat
 
 
-def _replies(table: dict, key: str) -> list[str]:
+def _replies(table: dict, key: str) -> list:
+    """Scripted replies: text, or a table `{ text = ..., write = { "file" = "content" } }`."""
     value = table.get(key, [])
-    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        raise CaseError(f"'{key}' in [mock] must be a list of text replies")
+    ok = isinstance(value, list) and all(
+        isinstance(v, str) or (isinstance(v, dict) and isinstance(v.get("text"), str)
+                               and isinstance(v.get("write", {}), dict)) for v in value)
+    if not ok:
+        raise CaseError(f"'{key}' in [mock] must be a list of text replies "
+                        "(or tables with a 'text' and optionally a 'write' table)")
     return value
 
 
@@ -126,8 +139,12 @@ def load_case(path: str | Path) -> Case:
 
     subject = _table(data, "subject")
     adapter = _text(subject, "adapter", "[subject]") or "chat"
-    if adapter != "chat":
-        raise CaseError(f"[subject] adapter {adapter!r} is not built yet; only 'chat' exists")
+    if adapter not in ("chat", "agent"):
+        raise CaseError(f"[subject] adapter {adapter!r} is not built yet; the adapters are 'chat' and 'agent'")
+    allowed_tools = subject.get("allowed_tools")
+    if allowed_tools is not None and not (isinstance(allowed_tools, list)
+                                          and all(isinstance(t, str) for t in allowed_tools)):
+        raise CaseError("[subject] allowed_tools must be a list of text, such as [\"Read\", \"Write(review.md)\"]")
     subject_seat = _seat(subject, "[subject]")
     opening = _text(subject, "opening", "[subject]")
     stop_pattern = None
@@ -138,16 +155,39 @@ def load_case(path: str | Path) -> Case:
         except re.error as e:
             raise CaseError(f"[subject] stop_pattern is not a valid regular expression: {e}") from None
 
+    options = {}
+    if "tools" in subject:
+        if not (isinstance(subject["tools"], list) and all(isinstance(t, str) for t in subject["tools"])):
+            raise CaseError("[subject] tools must be a list of tool names, such as [\"Read\", \"Write\"]")
+        options["tools"] = subject["tools"]
+    if "permission_mode" in subject:
+        options["permission_mode"] = _text(subject, "permission_mode", "[subject]")
+
     raw_variants = _table(data, "variants")
     if not raw_variants:
         raise CaseError("[variants] must list at least one variant, such as baseline = \"variants/baseline.md\"")
     variants = {}
     for vname, rel in raw_variants.items():
         if not isinstance(rel, str):
-            raise CaseError(f"variant {vname!r} must be a file path in quotes")
-        if not (root / rel).is_file():
-            raise CaseError(f"variant {vname!r}: file not found: {rel}")
-        variants[vname] = root / rel
+            raise CaseError(f"variant {vname!r} must be a path in quotes")
+        if adapter == "agent":
+            if rel and not (root / rel).is_dir():
+                raise CaseError(f"variant {vname!r}: folder not found: {rel} "
+                                "(for an agent subject a variant is a folder, or \"\" for none)")
+            variants[vname] = root / rel if rel else None
+        else:
+            if not (root / rel).is_file():
+                raise CaseError(f"variant {vname!r}: file not found: {rel}")
+            variants[vname] = root / rel
+
+    scenario = _table(data, "scenario", required=False)
+    scenario_dir, exclude = None, scenario.get("exclude", [])
+    if not isinstance(exclude, list) or not all(isinstance(x, str) for x in exclude):
+        raise CaseError("[scenario] exclude must be a list of glob patterns in quotes")
+    if scenario.get("folder"):
+        scenario_dir = root / _text(scenario, "folder", "[scenario]")
+        if not scenario_dir.is_dir():
+            raise CaseError(f"[scenario] folder not found: {scenario['folder']}")
 
     sims_t = _table(data, "sims")
     sim_seat = _seat(sims_t, "[sims]")
@@ -184,7 +224,9 @@ def load_case(path: str | Path) -> Case:
     return Case(name=name, root=root, runs_dir=runs_dir, adapter=adapter, subject_seat=subject_seat,
                 opening=opening, stop_pattern=stop_pattern, variants=variants, sim_seat=sim_seat,
                 sims=sims, frame_path=frame_path, max_turns=max_turns,
-                mock_subject=_replies(mock, "subject"), mock_sim=_replies(mock, "sim"), checks_path=checks_path)
+                mock_subject=_replies(mock, "subject"), mock_sim=_replies(mock, "sim"), checks_path=checks_path,
+                allowed_tools=allowed_tools, scenario_dir=scenario_dir, scenario_exclude=exclude,
+                subject_options=options)
 
 
 def load_persona(path: Path, case_root: Path) -> Persona:

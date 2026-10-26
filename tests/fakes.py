@@ -1,0 +1,136 @@
+"""Test doubles for the outside world: a fake `claude` program and a local OpenAI-style server.
+
+Nothing here touches the network beyond 127.0.0.1, and nothing calls a real model.
+"""
+
+import json
+import os
+import stat
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from unittest import mock
+
+FAKE_CLAUDE = """#!{python}
+import json, os, sys
+log = os.environ["FAKE_LOG"]
+script = json.load(open(os.environ["FAKE_SCRIPT"]))
+n = sum(1 for _ in open(log)) if os.path.exists(log) else 0
+argv = sys.argv[1:]
+rec = {{"argv": argv, "stdin": sys.stdin.read(), "cwd": os.getcwd(), "listing": sorted(os.listdir("."))}}
+if "--system-prompt-file" in argv:
+    path = argv[argv.index("--system-prompt-file") + 1]
+    rec["system_file"] = {{"path": path, "content": open(path).read(), "mode": os.stat(path).st_mode & 0o777,
+                           "dir_mode": os.stat(os.path.dirname(path)).st_mode & 0o777}}
+with open(log, "a") as f:
+    f.write(json.dumps(rec) + "\\n")
+step = script[min(n, len(script) - 1)]
+if step.get("sleep"):
+    import subprocess, time
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    open(log + ".pid", "w").write(str(child.pid))
+    time.sleep(step["sleep"])
+sys.stdout.write(step.get("stdout", ""))
+sys.stderr.write(step.get("stderr", ""))
+sys.exit(step.get("exit", 0))
+"""
+
+
+class FakeClaude:
+    """A script standing in for the `claude` program. Records every call; replies from `steps`.
+
+    Each step is {"stdout": ..., "stderr": ..., "exit": ...}; the last step repeats.
+    """
+
+    def __init__(self, folder: Path, steps: list[dict]):
+        folder.mkdir(parents=True, exist_ok=True)
+        self.bin = folder / "claude"
+        self.log = folder / "calls.jsonl"
+        self.script = folder / "script.json"
+        self.bin.write_text(FAKE_CLAUDE.format(python=sys.executable))
+        self.bin.chmod(self.bin.stat().st_mode | stat.S_IXUSR)
+        self.script.write_text(json.dumps(steps))
+        self.patcher = mock.patch.dict(os.environ, {
+            "REHEARSE_CLAUDE_BIN": str(self.bin), "FAKE_LOG": str(self.log), "FAKE_SCRIPT": str(self.script)})
+
+    def __enter__(self):
+        self.patcher.start()
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        return self
+
+    def __exit__(self, *exc):
+        self.patcher.stop()
+
+    @property
+    def calls(self) -> list[dict]:
+        if not self.log.exists():
+            return []
+        return [json.loads(l) for l in self.log.read_text().splitlines()]
+
+
+def chat_json(text="hello", cost=0.01, model="claude-test", is_error=False, **extra):
+    return json.dumps({"type": "result", "result": text, "total_cost_usd": cost, "is_error": is_error,
+                       "session_id": "chat-session", "usage": {"input_tokens": 10, "output_tokens": 5},
+                       "modelUsage": {model: {}}, **extra})
+
+
+def stream(text="done", cost=0.1, sid="sess-1", tools=(), is_error=False, model="claude-test"):
+    """stream-json lines for one agent turn. `tools` is a list of (name, input dict)."""
+    events = [{"type": "system", "subtype": "init", "session_id": sid, "model": model, "tools": ["Read", "Write"]}]
+    for name, tool_input in tools:
+        events.append({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": name, "input": tool_input}]}})
+    events.append({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+    events.append({"type": "result", "subtype": "success", "result": text, "total_cost_usd": cost,
+                   "is_error": is_error, "session_id": sid, "usage": {"input_tokens": 7, "output_tokens": 3}})
+    return "\n".join(json.dumps(e) for e in events) + "\n"
+
+
+class FakeServer:
+    """A local OpenAI-style server. `replies` is a list of (status, headers, body); the last repeats."""
+
+    def __init__(self, replies=None):
+        self.replies = replies or [ok_body()]
+        self.requests: list[dict] = []
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length).decode()
+                outer.requests.append({"path": self.path, "headers": dict(self.headers),
+                                       "json": json.loads(body) if body else None})
+                n = len(outer.requests) - 1
+                status, headers, payload = outer.replies[min(n, len(outer.replies) - 1)]
+                data = payload if isinstance(payload, bytes) else payload.encode()
+                self.send_response(status)
+                for k, v in headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        self.httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=lambda: self.httpd.serve_forever(poll_interval=0.01), daemon=True)
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+def ok_body(text="Hello there", tokens_in=11, tokens_out=7, model="fake-model"):
+    body = {"model": model, "choices": [{"message": {"role": "assistant", "content": text}}],
+            "usage": {"prompt_tokens": tokens_in, "completion_tokens": tokens_out}}
+    return (200, {"Content-Type": "application/json"}, json.dumps(body))

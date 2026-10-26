@@ -101,3 +101,35 @@ def build_runs(root: Path, *, subject=("What do you need?", "Tell me more?"), si
                     subj.is_mock = False
                 execute_run(case, v, s, subj, MockBackend(list(sim), default="Okay."), today=TODAY, repeat=i + 1)
     return case.runs_dir
+
+
+def make_agent_case(root: Path, *, scenario=None, exclude=("for-people/**",), overlays=None,
+                    subject_toml=None, seat='"mock"', allowed_tools=('Read', 'Write(review.md)'),
+                    sim_replies=("Fine.", "DONE"), max_turns=4, knowledge="Dana has two tasks.\n") -> Path:
+    """Write an agent case: a scenario folder, variant overlay folders, one persona."""
+    scenario = {"notes.md": "# Notes\n- Finish the report\n", "for-people/secret.md": "facilitator only\n"} \
+        if scenario is None else scenario
+    overlays = {"baseline": None, "plain": {"CLAUDE.md": "Keep replies short.\n"}} if overlays is None else overlays
+    for rel, text in scenario.items():
+        (root / "scenario" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / "scenario" / rel).write_text(text)
+    toml = ['name = "acase"', "[subject]", 'adapter = "agent"', f"seat = {seat}",
+            f"allowed_tools = {json.dumps(list(allowed_tools))}", 'opening = "Please write my review."',
+            "[scenario]", 'folder = "scenario"', f"exclude = {json.dumps(list(exclude))}", "[variants]"]
+    for name, files in overlays.items():
+        if files is None:
+            toml.append(f'{name} = ""')
+            continue
+        for rel, text in files.items():
+            (root / "variants" / name / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / "variants" / name / rel).write_text(text)
+        toml.append(f'{name} = "variants/{name}"')
+    toml += ["[sims]", 'seat = "mock"', 'dir = "sims"', "[limits]", f"max_turns = {max_turns}", "[mock]",
+             "subject = " + (subject_toml or '[{ text = "Wrote it.", write = { "review.md" = "# Review\\n" } }, "More?"]'),
+             f"sim = {json.dumps(list(sim_replies))}"]
+    (root / "sims").mkdir(exist_ok=True)
+    (root / "knowledge").mkdir(exist_ok=True)
+    (root / "knowledge" / "dana.md").write_text(knowledge)
+    (root / "sims" / "dana.md").write_text("---\nname: dana\nknowledge: knowledge/dana.md\n---\n\nDana is busy.\n")
+    (root / "case.toml").write_text("\n".join(toml) + "\n")
+    return root / "case.toml"
