@@ -1,0 +1,25 @@
+name = "mock-case"
+checks = "checks.py"                # optional: Python checks that read each saved run
+# runs_dir = "runs"               # where run folders go, relative to this file (default "runs")
+
+[subject]
+adapter = "chat"
+seat = "mock"
+opening = "Hello."                # used when a persona has no opening of its own
+stop_pattern = "(?i)that's all for today"
+
+[variants]
+baseline = "variants/baseline.md"
+cheerful = "variants/cheerful.md"
+
+[sims]
+seat = "mock"
+dir = "sims"
+
+[limits]
+max_turns = 12
+
+# Scripted replies for mock seats. The sim ends the talk by saying its stop word.
+[mock]
+subject = ["Hi. What would you like to talk about?", "I see. Tell me more.", "Thanks, that helps."]
+sim = ["Not much, really.", "I guess so.", "DONE"]

@@ -1,0 +1,16 @@
+[project]
+name = "rehearse"
+version = "0.1.0"
+description = "Test an AI that talks with people, by having another model play the person."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = []
+
+[project.scripts]
+rehearse = "rehearse.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"

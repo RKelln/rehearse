@@ -1,0 +1,7 @@
+# Context for whoever builds this: who uses it and why. Not part of the tool.
+/HANDOFF.md
+__pycache__
+.DS_Store
+/runs/
+/examples/mock-case/runs/
+/.venv/
