@@ -104,6 +104,9 @@ def _item(name, result, evidence):
 
 def sim_check(run) -> dict:
     """Check the sim's side of a saved run. Returns items, an overall result, and void info."""
+    if str((run.meta.get("seats") or {}).get("sim", "")).startswith("human"):
+        return {"result": "skip", "items": [_item("played_by_a_person", "skip", "a person played this side")],
+                "void": False, "void_reason": ""}
     replies = [t for t in run.turns if t["side"] == "person" and t["n"] >= 1]
     stop_word = run.meta.get("sim_stop_word") or "DONE"
     items = []
