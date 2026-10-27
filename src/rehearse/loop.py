@@ -2,9 +2,11 @@
 
 Stop rules, in the order they are checked after each subject reply:
   subject-stop  the subject's reply matches the case's stop_pattern
-  artifact-done the case's `stop_after_artifact` file exists in the work folder and either the
-                subject's reply asks nothing (no "?"), or `turns_after_artifact` more subject turns
-                have been given since it was first seen
+  artifact-done the case's `stop_after_artifact` file exists in the work folder, the subject's reply
+                asks nothing (no "?"), and the reply names the file or the file changed in that
+                turn (the subject says it is saved); or, if `turns_after_artifact` is set, that
+                many more subject turns have been given since the file first appeared. Agents that
+                write a draft early and keep talking are not cut short by the first quiet reply.
   turn-cap      the subject has replied max_turns times (new replies only, after a prefill)
   continuation-done  a focused continuation without a sim: the subject has given its one reply
 then after each sim reply:
@@ -21,6 +23,7 @@ on an empty reply).
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
@@ -160,6 +163,7 @@ def run_conversation(case: Case, adapter: ChatAdapter, sim: Backend | None, pers
     Ctrl-C sets `interrupted`, so the caller can save the run first and then re-raise.
     """
     out = Outcome(started=_now())
+    artifact_digest = None          # the stop_after_artifact file as of the last subject turn
     cap = max_turns or case.max_turns
     one_reply = bool(prefill) and persona is None
     opening = prefill[0].text if prefill else persona.opening or case.opening
@@ -182,11 +186,17 @@ def run_conversation(case: Case, adapter: ChatAdapter, sim: Backend | None, pers
             if case.stop_pattern and case.stop_pattern.search(res.text):
                 out.stop = "subject-stop"
                 break
-            if case.stop_after_artifact and hasattr(adapter, "artifact_exists"):
-                if out.artifact_seen_turn is None and adapter.artifact_exists(case.stop_after_artifact):
+            if case.stop_after_artifact and hasattr(adapter, "artifact_digest"):
+                digest = adapter.artifact_digest(case.stop_after_artifact)
+                changed = digest is not None and digest != artifact_digest
+                artifact_digest = digest
+                if out.artifact_seen_turn is None and digest is not None:
                     out.artifact_seen_turn = n
-                if out.artifact_seen_turn is not None and (
-                        "?" not in res.text or n - out.artifact_seen_turn >= case.turns_after_artifact):
+                named = Path(case.stop_after_artifact).name.lower() in res.text.lower()
+                said_saved = digest is not None and "?" not in res.text and (named or changed)
+                capped = (out.artifact_seen_turn is not None and case.turns_after_artifact is not None
+                          and n - out.artifact_seen_turn >= case.turns_after_artifact)
+                if said_saved or capped:
                     out.stop = "artifact-done"
                     break
             if out.generated("subject") >= cap:

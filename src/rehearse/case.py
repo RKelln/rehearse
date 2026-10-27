@@ -89,7 +89,7 @@ class Case:
     context_raw: str = ""
     max_prompt_chars: int | None = None      # refuse a variant longer than this
     stop_after_artifact: str | None = None   # agent subject: a path in the work folder; see loop.py
-    turns_after_artifact: int = 2            # subject turns allowed after it appears, if the subject still asks things
+    turns_after_artifact: int | None = None  # optional cap: subject turns allowed after it first appears
 
     def frame_text(self) -> str:
         """The sim frame: the case's own file, else the one shipped with the tool."""
@@ -348,8 +348,8 @@ def load_case(path: str | Path) -> Case:
         if (not isinstance(stop_after, str) or not stop_after.strip() or Path(stop_after).is_absolute()
                 or ".." in Path(stop_after).parts):
             raise CaseError("[limits] stop_after_artifact must be a path inside the work folder, such as \"review.md\"")
-    turns_after = limits.get("turns_after_artifact", 2)
-    if isinstance(turns_after, bool) or not isinstance(turns_after, int) or turns_after < 0:
+    turns_after = limits.get("turns_after_artifact")
+    if turns_after is not None and (isinstance(turns_after, bool) or not isinstance(turns_after, int) or turns_after < 0):
         raise CaseError("[limits] turns_after_artifact must be a whole number, 0 or more")
 
     checks_path = None

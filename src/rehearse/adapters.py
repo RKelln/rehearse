@@ -8,6 +8,8 @@ its own state (a session id, a folder copy), so the loop only calls `reply`.
 
 from __future__ import annotations
 
+import hashlib
+
 from dataclasses import asdict
 from pathlib import Path
 
@@ -86,6 +88,11 @@ class AgentAdapter:
     def artifact_exists(self, rel: str) -> bool:
         """Is there a file at this path in the work copy right now?"""
         return (self.workdir / rel).is_file()
+
+    def artifact_digest(self, rel: str) -> str | None:
+        """A fingerprint of that file now, or None if it is not there; tells a fresh write from an old one."""
+        path = self.workdir / rel
+        return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
 
     def close(self) -> None:
         if self.session is not None:

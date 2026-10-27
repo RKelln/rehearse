@@ -249,13 +249,22 @@ class ArtifactStopTests(CaseTest):
         self.assertEqual(meta["artifact_seen_turn"], 1)
         self.assertEqual(meta["turns"], {"subject": 1, "person": 0})
 
-    def test_questions_keep_it_going_up_to_the_limit(self):
-        w = '{ text = "Saved. Anything else?", write = { "review.md" = "# R\\n" } }'
-        res, meta = self.run_case(f'[{w}, "More?", "Still?", "Again?"]', limits=self.LIMIT)
+    def test_early_draft_then_quiet_reply_does_not_stop(self):
+        # An agent that writes a draft early and keeps talking is not cut short by a reply with no "?".
+        early = '{ text = "I saved a first draft. How did the week feel?", write = { "review.md" = "# draft\\n" } }'
+        res, meta = self.run_case(f'[{early}, "Let us start with your wins.", "All set: it is in review.md."]',
+                                  limits=self.LIMIT)
         self.assertEqual((res.stop, meta["turns"]["subject"], meta["artifact_seen_turn"]), ("artifact-done", 3, 1))
-        res, meta = self.run_case(f'[{w}, "More?", "Still?", "Again?"]', limits=self.LIMIT + "\nturns_after_artifact = 1")
+
+    def test_a_write_in_the_same_turn_counts_as_saying_saved(self):
+        res, meta = self.run_case('["a?", { text = "Done.", write = { "review.md" = "# R\\n" } }, "b"]', limits=self.LIMIT)
         self.assertEqual((res.stop, meta["turns"]["subject"]), ("artifact-done", 2))
-        res, meta = self.run_case(f'[{w}, "All done."]', limits=self.LIMIT)
+
+    def test_questions_keep_it_going_and_the_optional_cap(self):
+        w = '{ text = "Saved review.md. Anything else?", write = { "review.md" = "# R\\n" } }'
+        res, meta = self.run_case(f'[{w}, "More?", "Still?", "Again?"]', sim=("Fine.", "Fine.", "DONE"), limits=self.LIMIT)
+        self.assertEqual((res.stop, meta["turns"]["subject"]), ("sim-stop", 3))
+        res, meta = self.run_case(f'[{w}, "More?", "Still?", "Again?"]', limits=self.LIMIT + "\nturns_after_artifact = 1")
         self.assertEqual((res.stop, meta["turns"]["subject"]), ("artifact-done", 2))
 
     def test_sim_stop_word_wins_if_first(self):
