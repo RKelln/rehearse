@@ -12,9 +12,9 @@ import re
 from .simcheck import ORDER
 
 FILE_TOOLS = {"read", "write", "edit", "multiedit", "glob", "grep", "list", "ls", "patch", "apply_patch",
-              "notebookedit", "notebookread"}
-WRITE_TOOLS = {"write", "edit", "multiedit", "patch", "apply_patch", "notebookedit"}
-SHELL_TOOLS = {"bash"}
+              "notebookedit", "notebookread", "delete"}
+WRITE_TOOLS = {"write", "edit", "multiedit", "patch", "apply_patch", "notebookedit", "delete"}
+SHELL_TOOLS = {"bash", "shell"}
 # An absolute or "~" path inside a shell command, not part of a longer word or a URL.
 _SHELL_PATH = re.compile(r"(?<![\w./:~-])(?:~[\w-]*(?:/[^\s'\"`;|&)<>]*)?|/[^\s'\"`;|&)<>]+)")
 _HARMLESS = ("/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr")

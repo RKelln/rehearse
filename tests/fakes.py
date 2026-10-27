@@ -211,3 +211,81 @@ def ok_body(text="Hello there", tokens_in=11, tokens_out=7, model="fake-model"):
     body = {"model": model, "choices": [{"message": {"role": "assistant", "content": text}}],
             "usage": {"prompt_tokens": tokens_in, "completion_tokens": tokens_out}}
     return (200, {"Content-Type": "application/json"}, json.dumps(body))
+
+
+FAKE_CODEX = """#!{python}
+import json, os, sys
+log = os.environ["FAKE_LOG"]
+script = json.load(open(os.environ["FAKE_SCRIPT"]))
+n = sum(1 for _ in open(log)) if os.path.exists(log) else 0
+home = os.environ.get("CODEX_HOME", "")
+auth = os.path.join(home, "auth.json")
+rec = {{"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ), "stdin": sys.stdin.read(),
+        "stdin_target": os.readlink("/proc/self/fd/0"),
+        "home_listing": sorted(os.listdir(home)) if os.path.isdir(home) else None,
+        "home_mode": os.stat(home).st_mode & 0o777 if os.path.isdir(home) else None,
+        "auth_mode": os.stat(auth).st_mode & 0o777 if os.path.exists(auth) else None,
+        "auth_content": open(auth).read() if os.path.exists(auth) else None}}
+with open(log, "a") as f:
+    f.write(json.dumps(rec) + "\\n")
+step = script[min(n, len(script) - 1)]
+for rel, text in (step.get("write") or {{}}).items():
+    with open(rel, "w") as f:
+        f.write(text)
+for rel, text in (step.get("session") or {{}}).items():
+    path = os.path.join(home, "sessions", rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(text)
+if step.get("sleep"):
+    import subprocess, time
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    open(log + ".pid", "w").write(str(child.pid))
+    time.sleep(step["sleep"])
+sys.stdout.write(step.get("stdout", ""))
+sys.stderr.write(step.get("stderr", ""))
+sys.exit(step.get("exit", 0))
+"""
+
+
+class FakeCodex(FakeOpencode):
+    """A script standing in for the `codex` program. Records argv, cwd, stdin, environment and CODEX_HOME.
+
+    Each step is {"stdout", "stderr", "exit", "write": {file: text}, "session": {path under sessions/: text},
+    "sleep"}; the last step repeats.
+    """
+
+    def __init__(self, folder: Path, steps: list[dict]):
+        folder.mkdir(parents=True, exist_ok=True)
+        self.bin = folder / "codex"
+        self.log = folder / "calls.jsonl"
+        self.script = folder / "script.json"
+        self.bin.write_text(FAKE_CODEX.format(python=sys.executable))
+        self.bin.chmod(self.bin.stat().st_mode | stat.S_IXUSR)
+        self.script.write_text(json.dumps(steps))
+        self.patcher = mock.patch.dict(os.environ, {
+            "REHEARSE_CODEX_BIN": str(self.bin), "FAKE_LOG": str(self.log), "FAKE_SCRIPT": str(self.script)})
+
+
+def codex_events(texts=("done",), tid="thr_1", items=(), usage=(100, 60, 0, 20, 5)):
+    """JSON lines for one codex turn.
+
+    `items` are extra item dicts, each completed before the texts (all but the last text come before them
+    too, as preamble messages). `usage` is (input, cached input, cache write, output, reasoning output).
+    """
+    def ev(kind, **rest):
+        return json.dumps({"type": kind, **rest})
+    t_in, cached, c_write, t_out, reasoning = usage
+    texts = list(texts)
+    lines = [ev("thread.started", thread_id=tid), ev("turn.started")]
+    for i, text in enumerate(texts[:-1]):
+        lines.append(ev("item.completed", item={"id": f"m{i}", "type": "agent_message", "text": text}))
+    for i, item in enumerate(items):
+        lines.append(ev("item.started", item={"id": f"i{i}", **item}))
+        lines.append(ev("item.completed", item={"id": f"i{i}", **item}))
+    if texts:
+        lines.append(ev("item.completed", item={"id": "last", "type": "agent_message", "text": texts[-1]}))
+    lines.append(ev("turn.completed", usage={"input_tokens": t_in, "cached_input_tokens": cached,
+                                             "cache_write_input_tokens": c_write, "output_tokens": t_out,
+                                             "reasoning_output_tokens": reasoning}))
+    return "\n".join(lines) + "\n"

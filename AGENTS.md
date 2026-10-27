@@ -3,7 +3,7 @@
 Rehearse tests an AI that talks with people by having another model play the person. The design is
 in [`docs/DESIGN.md`](docs/DESIGN.md). Read it before changing anything.
 
-Status: steps 1 to 3, 5, 6a and 6b built (core loop, checks, sim check, board, compare, claude, opencode and http backends, agent adapter, cost, rubric and judge, focused continuations for chat subjects). See `docs/PLAN.md`.
+Status: steps 1 to 3, 5, 6a, 6b and 6c built (core loop, checks, sim check, board, compare, claude, opencode, codex and http backends, agent adapter, cost, rubric and judge, focused continuations for chat subjects). See `docs/PLAN.md`.
 
 ## Rules for working here
 

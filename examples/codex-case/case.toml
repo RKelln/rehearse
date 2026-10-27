@@ -1,0 +1,23 @@
+# A tiny live agent case: codex works in a copy of the scenario folder.
+# Needs the `codex` program and a login (`codex login`), and DEEPSEEK_API_KEY for the simulated person
+# (in the environment or in ~/.config/rehearse/keys; see docs/BACKENDS.md). Not run by the tests.
+name = "codex-case"
+
+[subject]
+adapter = "agent"
+seat = "codex"
+allowed_tools = ["Read", "Write(note.md)"]
+opening = "Please read tasks.md and write a short plan for my week into note.md."
+
+[scenario]
+folder = "scenario"
+
+[variants]
+baseline = ""
+
+[sims]
+seat = "deepseek:deepseek-chat"
+dir = "sims"
+
+[limits]
+max_turns = 3

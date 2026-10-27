@@ -12,6 +12,7 @@ In `case.toml`, a seat is a short string, `backend[:model]`:
 | `mock` | scripted replies, for testing the tool. Costs nothing. Runs are marked "plumbing only". |
 | `claude:sonnet` | the `claude` command line program, with that model (the model is optional) |
 | `opencode:PROVIDER/MODEL` | the `opencode` command line program (agent seats only), such as `opencode:deepseek/deepseek-chat` |
+| `codex[:MODEL]` | the `codex` command line program (agent seats only), such as `codex:gpt-5` |
 | `http:MODEL@BASE_URL` | any OpenAI-compatible endpoint, such as `http:llama3@http://localhost:11434/v1` |
 | `openai:MODEL` | `https://api.openai.com/v1`, key `OPENAI_API_KEY` |
 | `openrouter:MODEL` | `https://openrouter.ai/api/v1`, key `OPENROUTER_API_KEY`, 18 requests a minute |
@@ -36,6 +37,7 @@ seat = { backend = "http", model = "my-model", base_url = "http://127.0.0.1:8080
 | `max_tokens`, `temperature` | sent to the server if given |
 | `setting_sources`, `max_budget_usd`, `tools`, `permission_mode` | claude only; see below |
 | `provider`, `permission` | opencode only; see below |
+| `sandbox`, `config` | codex only; see below |
 
 ## Keys
 
@@ -56,6 +58,7 @@ A backend says what it supports, and the adapters check it before a run starts:
 | `mock` | yes | yes | yes | yes |
 | `claude` | yes | yes | yes | yes |
 | `opencode` | no | yes | yes | yes |
+| `codex` | no | yes | yes | yes |
 | `http` | yes | no | no | no |
 
 - A **chat** seat takes a system prompt and the whole conversation each turn and returns the reply.
@@ -198,6 +201,75 @@ Unknown event types are ignored.
   the program's whole process group is killed.
 - `timeout` (default 900 seconds) is the one setting. `max_budget_usd` is not passed on: opencode has no
   such flag, so `--max-usd` cannot stop a turn that is already running.
+
+## The codex backend
+
+The program is `codex`, or whatever `REHEARSE_CODEX_BIN` names. It is an agent backend: it can run an
+agent subject but not a chat seat or the sim. Tested against codex-cli 0.163.0 with a ChatGPT login.
+
+**Seat.** `codex` or `codex:MODEL`. Without a model, codex uses its own default. As a table:
+
+```toml
+[subject]
+seat = { backend = "codex", model = "gpt-5", timeout = 600, sandbox = "workspace-write",
+         config = ['model_reasoning_effort="low"'] }
+```
+
+`sandbox` overrides the choice described below. `config` is a list of extra `-c key=value` settings passed
+to codex. `key_env`, `price_in_per_mtok` and `price_out_per_mtok` are for cost (see Cost).
+
+**A turn** runs in the work folder (the process's folder and `PWD`), with standard input closed, as:
+
+```
+codex exec [resume|fork] --json --skip-git-repo-check --ignore-user-config --ignore-rules [-C WORKDIR]
+      -c sandbox_mode="workspace-write"
+      -c sandbox_workspace_write.exclude_slash_tmp=true
+      -c sandbox_workspace_write.exclude_tmpdir_env_var=true [-m MODEL] [THREAD_ID] [--] "message"
+```
+
+The first turn has no subcommand and passes `-C WORKDIR`; later turns use `exec resume ... THREAD_ID`,
+which refuses `-C`, so resume and fork rely on the process's folder and `PWD`. `exec fork ... THREAD_ID`
+starts a new thread that keeps the old context; the fork tracks the new thread id and the original is
+unchanged. The message is the last argument, after `--` if it starts with a dash. Standard input is always
+closed, because codex otherwise waits for more input. The output is one JSON event per line. The reply is
+the last `agent_message` of the turn; earlier ones are kept in the turn's extras as `preamble`.
+
+- **The `/tmp` exclusions are essential.** Work copies live under the system temporary folder. With plain
+  `workspace-write`, an agent wrote `../outside.txt` next to its work copy, because that sandbox leaves the
+  temporary folders writable. With the two exclusions, writes outside the work folder were refused. They
+  are passed on every turn, whatever the sandbox.
+- **Isolation.** Each session gets a private `CODEX_HOME` (a temporary folder, mode 700, shared with its
+  forks and removed when the last one closes). The person's login file (`$CODEX_HOME/auth.json`, else
+  `~/.codex/auth.json`) is copied into it, mode 600, by file copy only: rehearse never reads it, and it and
+  the private home are never copied into a run folder. If there is no login file, the run stops with
+  "log in with `codex login` first". `--ignore-user-config` and `--ignore-rules` keep the person's own
+  codex settings and rules out. A harmless warning about "PATH aliases" under a temporary folder may appear.
+- **Tool limits are approximate.** codex has no per-tool or per-path list. The case's `allowed_tools` only
+  choose the sandbox: `workspace-write` if any of `Write`, `Edit`, `MultiEdit`, `NotebookEdit` or `Bash` is
+  allowed (with or without a path), else `read-only`. `Write(review.md)` therefore does not stop the agent
+  writing other files in its work folder, and an agent in either mode can run shell commands. Each run prints
+  one warning saying so, and the turn's extras hold `tool_limits` ("approximate: sandbox MODE"). The
+  work-folder check and the folder diff still apply and are the real safeguards.
+- **Instructions.** codex obeys `AGENTS.md` in the work folder. If the folder has a `CLAUDE.md` and no
+  `AGENTS.md`, rehearse adds `-c project_doc_fallback_filenames=["CLAUDE.md"]` and records
+  `instructions_added`. Skill folders (`.claude/skills`, `.agents/skills`) are listed in the extras as
+  `skills_present`; whether codex loads them is **not verified**.
+- **Tool calls.** A command is recorded as `shell` with the command (the `/bin/bash -lc '...'` wrapper
+  removed, the work folder shown as `./`). A file change is one call per file: `write` (added), `edit`
+  (updated) or `delete`, with the path. Any other item type (such as `web_search`) is recorded under its
+  type name with no argument. The work-folder check treats `shell` like `bash` and these like file tools.
+- **Model.** The events never name the model. If the seat names one, that is used. Otherwise rehearse looks
+  in the private home's `sessions/` folder for the file of the thread and reads the first `"model"` value;
+  failing that, the model is unknown.
+- **Tokens and cost.** `tokens_in` is codex's `input_tokens` (which already includes cached tokens);
+  `tokens_out` is output plus reasoning tokens, summed over the turn. Cost is unknown, never zero. With a
+  ChatGPT login the turn's extras say `cost_basis: "subscription (not metered)"`. If the seat names an API
+  key with `key_env` (read the usual way, passed to codex as `OPENAI_API_KEY`, and no login file is copied;
+  this path is not verified live), cost is worked out from `price_in_per_mtok` and `price_out_per_mtok`.
+- **Failure.** A `turn.failed` event, or an `error` event with no completed turn, is an error; quota wording
+  makes it a quota error. A non-zero exit with events is used and the exit code recorded; with none it is an
+  error with the end of the error output. On a timeout or Ctrl-C the whole process group is killed.
+- `timeout` (default 900 seconds). `max_budget_usd` is not passed on: codex has no such flag.
 
 ## The agent's folder: not a sandbox
 

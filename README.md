@@ -6,8 +6,8 @@ Give it the thing under test (a prompt, an agent with a skill, or your own progr
 people, and checks that say what "good" means. It runs the conversations, keeps every word, and
 gives you a scoreboard you can compare from one change to the next.
 
-Status: steps 1 to 3, 5, 6a and 6b (focused continuations for chat subjects) of [`docs/PLAN.md`](docs/PLAN.md) are built: the core loop, checks, the sim
-check, the board and compare commands, the rubric and judge, and real backends (the `claude` and `opencode` programs and any
+Status: steps 1 to 3, 5, 6a, 6b and 6c (the codex backend; focused continuations for chat subjects) of [`docs/PLAN.md`](docs/PLAN.md) are built: the core loop, checks, the sim
+check, the board and compare commands, the rubric and judge, and real backends (the `claude`, `opencode` and `codex` programs and any
 OpenAI-compatible endpoint), including agents working in a copy of a scenario folder. Tests use scripted
 stand-ins only; they never call a live model. The design is in [`docs/DESIGN.md`](docs/DESIGN.md) and the
 backends are explained in [`docs/BACKENDS.md`](docs/BACKENDS.md).

@@ -5,6 +5,7 @@
     http:MODEL@BASE_URL          any OpenAI-compatible endpoint
     openai:MODEL  openrouter:MODEL  deepseek[:MODEL]     http with the endpoint and key name filled in
     opencode:PROVIDER/MODEL      the `opencode` command line tool (agent seats)
+    codex[:model]                the `codex` command line tool (agent seats)
 """
 
 from __future__ import annotations
@@ -17,10 +18,10 @@ PRESETS = {
     "openrouter": {"base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY", "rpm": 18},
     "deepseek": {"base_url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat"},
 }
-KNOWN = ("mock", "claude", "http", *PRESETS, "opencode")
+KNOWN = ("mock", "claude", "http", *PRESETS, "opencode", "codex")
 TABLE_KEYS = ("backend", "model", "base_url", "key_env", "price_in_per_mtok", "price_out_per_mtok",
               "timeout", "rpm", "setting_sources", "max_tokens", "temperature", "max_budget_usd",
-              "tools", "permission_mode", "provider", "permission")
+              "tools", "permission_mode", "provider", "permission", "sandbox", "config")
 _NUMBERS = ("price_in_per_mtok", "price_out_per_mtok", "timeout", "rpm", "max_tokens", "temperature",
             "max_budget_usd")
 
@@ -32,7 +33,7 @@ def _unknown(name, seat):
 def parse_seat_spec(seat) -> dict:
     """Read a seat, a "backend[:model]" string or a table, into one spec dict.
 
-    The dict always has "backend" ("mock", "claude", "opencode" or "http") and "model". An http spec also has
+    The dict always has "backend" ("mock", "claude", "opencode", "codex" or "http") and "model". An http spec also has
     "base_url" and "key_env". Presets (openai, openrouter, deepseek) become http specs.
     """
     if isinstance(seat, dict):
@@ -58,6 +59,10 @@ def parse_seat_spec(seat) -> dict:
             spec = {"model": model, "base_url": url}
         elif rest:
             spec = {"model": rest}
+    if "config" in spec and not (isinstance(spec["config"], list) and all(isinstance(t, str) for t in spec["config"])):
+        raise BackendError("seat setting 'config' must be a list of strings, each a codex `-c` setting")
+    if "sandbox" in spec and not isinstance(spec["sandbox"], str):
+        raise BackendError("seat setting 'sandbox' must be text, such as \"workspace-write\"")
     for key in ("provider", "permission"):
         if key in spec and not isinstance(spec[key], dict):
             raise BackendError(f"seat setting {key!r} must be a table")
@@ -97,6 +102,9 @@ def make_backend(seat, **opts) -> Backend:
     if spec["backend"] == "opencode":
         from .opencode import OpenCodeBackend
         return OpenCodeBackend(spec)
+    if spec["backend"] == "codex":
+        from .codex import CodexBackend
+        return CodexBackend(spec)
     from .claude import ClaudeBackend
     return ClaudeBackend(spec)
 
