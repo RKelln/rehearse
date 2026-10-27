@@ -148,3 +148,95 @@ rehearse run CASE ... --judge        # judge each run right after its checks (--
 ```
 
 A live judge seat prints a plan and asks first (or needs `--yes`).
+
+## Focused continuations
+
+Testing one step should not need a whole conversation. A **continuation** is a transcript written in
+advance, with a purpose and expectations. The subject is given the transcript and gives one reply,
+which is checked against the expectations. It is for chat subjects.
+
+Each continuation is a file in the case's `continuations` folder (or the folder named by
+`continuations = "..."` in `case.toml`):
+
+```markdown
+---
+purpose: "Keep a known outcome while saying what is missing."
+expect:
+  - Switches to feedback straight away
+  - Says the outcome is known, not unknown
+variant: current        # optional: run only with this variant
+sim: ordinary           # optional: after the prefill, carry on as a normal conversation with this sim
+max_turns: 4            # optional, needs sim: new subject replies allowed (default: the case's)
+rubric: false           # optional: also ask the case rubric's questions (default: false without a sim, true with one)
+---
+## Person
+
+Please start the mock interview.
+
+## Subject
+
+Tell me about helping a visitor.
+
+## Person
+
+I helped someone find a coat. Interview over.
+```
+
+- Sections are `## Person` and `## Subject`, the same headings `transcript.md` uses (a turn number in
+  parentheses is allowed and ignored). The first and the last section must be Person, because the
+  subject replies next, and the two sides must take turns: join two Person messages into one section.
+- `purpose` and `expect` are required. `expect` lines are plain-language expectations.
+- Without `sim`, the subject gives exactly one reply and the run stops with `continuation-done`.
+
+```
+rehearse continue CASE [--only id1,id2] [--variants a,b] [--repeats N] [--judge | --no-judge]
+                       [--yes] [--max-usd X] [--dry-run]
+```
+
+It works like `suite`: a plan, an estimate, a question before a live run, and the same budget cap.
+Runs are named `<date>-<case>-<variant>-cont-<id>-<n>`. Their `meta.json` has `continuation`,
+`prefilled_turns`, `prefill_sha256` (a hash of the prefilled turns) and `prefill_mode: "messages"`;
+`inputs/continuation.md` is a copy of the file. The board shows each continuation as the sim
+`cont:<id>`.
+
+**What the subject sees.** The variant, the context (below), and the prefilled turns as ordinary
+messages: its own earlier turns as assistant messages, the person's as user messages. It never sees
+the purpose or the expectations, and neither does a sim.
+
+**Caveat.** The subject did not really write its earlier turns, so a good reply shows it can handle
+that step, not that it would have got there. Check a step that matters in a full conversation too.
+
+**Checks and judge.** `turns.jsonl` marks prefilled turns `prefilled: true`. In a check, use
+`run.new_subject_turns` for what the subject really said (`run.subject_turns` includes the prefilled
+turns). The sim check looks only at turns a sim generated; with none it is `skip` ("no sim turns: a
+focused continuation") and voids nothing. The judge gets each `expect` line as a question with id `e1`,
+`e2`, ... and no Pass/Fail text, and the purpose as context. It also gets the case rubric's questions when
+the continuation's `rubric` is true (the default when it names a sim; a one-reply continuation asks only
+its expectations). The board puts `e` questions in their own table per continuation, since they only line
+up within one; a run that was never asked a question leaves that cell blank. The judge never sees the
+variant text, the context, or the persona's instructions.
+
+## Context and prompt length
+
+Two optional settings in `[subject]` (chat subjects):
+
+```toml
+[subject]
+context = "context.md"      # text appended to every variant's system prompt, under a "Context" heading
+max_prompt_chars = 1500     # run, suite and continue refuse a variant file longer than this
+```
+
+The context is saved as `inputs/context.md`. The length limit counts the variant file alone, not the
+context, which is shared test material. The limit needs a chat subject, and stops a prompt from growing past what the real
+place allows. A sim does not get the context automatically: put what it should know on its knowledge page.
+
+## Comparing runs of differently named variants
+
+```
+rehearse compare BEFORE AFTER --pair OLD=NEW      # repeatable
+```
+
+`--pair` compares the before runs of variant OLD with the after runs of variant NEW (the name is changed in
+memory only; no run folder is touched). The variant column shows `OLD→NEW` and a warning says the variants
+were paired by hand. Inputs are compared by the hash of what was written to disk; if one side never
+recorded an input, compare says "not recorded" rather than "changed".

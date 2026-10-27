@@ -43,6 +43,21 @@ class Persona:
 
 
 @dataclass
+class Continuation:
+    """A focused continuation: a prefilled transcript, then one subject reply (or a short conversation)."""
+    id: str                       # the file's stem
+    path: Path
+    purpose: str                  # for the judge only; never sent to a seat
+    expect: list[str]             # plain-language expectations; become judge questions e1, e2 ...
+    turns: list[tuple[str, str]]  # (side, text) with side "person" or "subject"; first and last are "person"
+    variant: str | None = None    # limit to one variant
+    sim: str | None = None        # a persona to continue with after the prefill; None = one reply only
+    max_turns: int | None = None  # with a sim: cap on generated subject replies (default: the case's)
+    rubric: bool = False          # also ask the case rubric's questions (default: only with a sim)
+    raw: str = ""                 # the file exactly as read
+
+
+@dataclass
 class Case:
     name: str
     root: Path
@@ -62,13 +77,17 @@ class Case:
     allowed_tools: list[str] | None = None   # agent subject: tools allowed on the command line
     scenario_dir: Path | None = None         # agent subject: the folder copied for each run
     scenario_exclude: list[str] = field(default_factory=list)   # globs, relative to the scenario folder
-    subject_options: dict = field(default_factory=dict)         # agent: "tools" and "permission_mode"
+    subject_options: dict = field(default_factory=dict)         # agent: "tools", "permission_mode", "permission"
     rubric_path: Path | None = None          # the case's rubric.md, if it has one
     rubric: dict | None = None               # that file, parsed (see judge.parse_rubric)
     answer_key_path: Path | None = None
     judge_seat: str | dict | None = None
     judge_default: bool = False              # judge every run right after its checks
     mock_judge: list[str] = field(default_factory=list)
+    continuations: dict[str, Continuation] = field(default_factory=dict)
+    context_path: Path | None = None         # chat subject: text appended to every variant's system prompt
+    context_raw: str = ""
+    max_prompt_chars: int | None = None      # refuse a variant longer than this
 
     def frame_text(self) -> str:
         """The sim frame: the case's own file, else the one shipped with the tool."""
@@ -76,8 +95,89 @@ class Case:
             return self.frame_path.read_bytes().decode()
         return resources.files("rehearse").joinpath("frames", "sim.md").read_bytes().decode()
 
+    def system_text(self, variant_text: str) -> str:
+        """The subject's system prompt: the variant, then the case's context under a "Context" heading."""
+        if not self.context_raw.strip():
+            return variant_text
+        return variant_text.rstrip("\n") + "\n\n## Context\n\n" + self.context_raw.strip() + "\n"
+
+    def check_prompt_limit(self, variants) -> None:
+        """Refuse, in plain words, a variant longer than `max_prompt_chars` (the variant file alone;
+        the shared context is not counted, since it is test material, not the prompt under test)."""
+        if not self.max_prompt_chars:
+            return
+        for v in variants:
+            path = self.variants.get(v)
+            if path and path.is_file():
+                n = len(path.read_bytes().decode())
+                if n > self.max_prompt_chars:
+                    raise CaseError(f"variant {v!r} is {n} characters, over the limit of "
+                                    f"{self.max_prompt_chars} (max_prompt_chars in [subject])")
+
     def persona(self, sim: str) -> Persona:
         return load_persona(self.sims[sim], self.root)
+
+
+_SECTION = re.compile(r"^##\s+(Person|Subject)\s*(?:\(\s*(?:turn\s*)?\d+\s*(?:,\s*prefilled\s*)?\))?\s*$", re.I)
+_CONT_KEYS = ("purpose", "expect", "variant", "sim", "max_turns", "rubric")
+
+
+def parse_continuation(raw: str, cont_id: str, path: Path) -> Continuation:
+    """Read a continuation file: frontmatter, then `## Person` / `## Subject` sections."""
+    where = f"continuation {cont_id}"
+    meta, body = frontmatter.parse(raw)
+    for key in meta:
+        if key not in _CONT_KEYS:
+            raise CaseError(f"{where}: unknown setting {key!r}; the settings are: {', '.join(_CONT_KEYS)}")
+    purpose = meta.get("purpose")
+    if not isinstance(purpose, str) or not purpose.strip():
+        raise CaseError(f"{where} needs a 'purpose' in its frontmatter")
+    expect = meta.get("expect")
+    if isinstance(expect, str) and expect.strip():
+        expect = [expect]
+    if not (isinstance(expect, list) and expect and all(isinstance(e, str) and e.strip() for e in expect)):
+        raise CaseError(f"{where} needs 'expect' in its frontmatter: a list of lines such as '  - asks one question'")
+    variant = meta.get("variant") or None
+    sim = meta.get("sim") or None
+    rubric_flag = str(meta.get("rubric", "")).strip().lower()
+    if rubric_flag and rubric_flag not in ("true", "yes", "on", "false", "no", "off"):
+        raise CaseError(f"{where}: 'rubric' must be true or false")
+    use_rubric = rubric_flag in ("true", "yes", "on") if rubric_flag else bool(sim)
+    max_turns = None
+    if "max_turns" in meta:
+        try:
+            max_turns = int(meta["max_turns"])
+        except (TypeError, ValueError):
+            max_turns = 0
+        if max_turns < 1:
+            raise CaseError(f"{where}: max_turns must be a whole number, 1 or more")
+        if not sim:
+            raise CaseError(f"{where}: max_turns needs a 'sim' (without one the subject gives exactly one reply)")
+    turns: list[tuple[str, str]] = []
+    for line in body.splitlines():
+        m = _SECTION.match(line)
+        if m:
+            turns.append(("person" if m.group(1).lower() == "person" else "subject", ""))
+        elif turns:
+            turns[-1] = (turns[-1][0], turns[-1][1] + line + "\n")
+        elif line.strip():
+            raise CaseError(f"{where}: text before the first '## Person' section: {line.strip()[:60]!r}")
+    turns = [(side, text.strip()) for side, text in turns]
+    if not turns:
+        raise CaseError(f"{where} has no '## Person' / '## Subject' sections")
+    for i, (side, text) in enumerate(turns, 1):
+        if not text:
+            raise CaseError(f"{where}: section {i} ({side}) is empty")
+    if turns[0][0] != "person":
+        raise CaseError(f"{where}: the first section must be '## Person'")
+    if turns[-1][0] != "person":
+        raise CaseError(f"{where}: the last section must be '## Person' (the subject replies next)")
+    for i in range(1, len(turns)):
+        if turns[i][0] == turns[i - 1][0]:
+            raise CaseError(f"{where}: sections {i} and {i + 1} are both from the {turns[i][0]}; "
+                            "the two sides must take turns (join them into one section)")
+    return Continuation(id=cont_id, path=path, purpose=purpose.strip(), expect=[e.strip() for e in expect],
+                        turns=turns, variant=variant, sim=sim, max_turns=max_turns, rubric=use_rubric, raw=raw)
 
 
 def _table(data: dict, key: str, required: bool = True) -> dict:
@@ -161,6 +261,22 @@ def load_case(path: str | Path) -> Case:
         except re.error as e:
             raise CaseError(f"[subject] stop_pattern is not a valid regular expression: {e}") from None
 
+    context_path, context_raw = None, ""
+    context_rel = _text(subject, "context", "[subject]")
+    if context_rel:
+        if adapter != "chat":
+            raise CaseError("[subject] context needs a chat subject (an agent has no system prompt to add it to)")
+        context_path = root / context_rel
+        if not context_path.is_file():
+            raise CaseError(f"[subject] context file not found: {context_rel}")
+        context_raw = context_path.read_bytes().decode()
+    max_prompt_chars = subject.get("max_prompt_chars")
+    if max_prompt_chars is not None and (isinstance(max_prompt_chars, bool) or not isinstance(max_prompt_chars, int)
+                                         or max_prompt_chars < 1):
+        raise CaseError("[subject] max_prompt_chars must be a whole number, 1 or more")
+    if max_prompt_chars is not None and adapter != "chat":
+        raise CaseError("[subject] max_prompt_chars needs a chat subject (an agent's variants are folders, not one prompt)")
+
     options = {}
     if "tools" in subject:
         if not (isinstance(subject["tools"], list) and all(isinstance(t, str) for t in subject["tools"])):
@@ -168,6 +284,11 @@ def load_case(path: str | Path) -> Case:
         options["tools"] = subject["tools"]
     if "permission_mode" in subject:
         options["permission_mode"] = _text(subject, "permission_mode", "[subject]")
+
+    if "permission" in subject:
+        if not isinstance(subject["permission"], dict):
+            raise CaseError("[subject] permission must be a table (opencode permissions)")
+        options["permission"] = subject["permission"]
 
     raw_variants = _table(data, "variants")
     if not raw_variants:
@@ -253,6 +374,24 @@ def load_case(path: str | Path) -> Case:
     if judge_default and not (rubric and judge_seat):
         raise CaseError("[judge] default = true needs a rubric and a judge seat")
 
+    continuations: dict[str, Continuation] = {}
+    cont_rel = _text(data, "continuations", "case.toml") or ("continuations" if (root / "continuations").is_dir() else "")
+    if cont_rel:
+        cont_dir = root / cont_rel
+        if not cont_dir.is_dir():
+            raise CaseError(f"continuations folder not found: {cont_rel}")
+        if adapter != "chat":
+            raise CaseError("continuations need a chat subject")
+        for p in sorted(cont_dir.glob("*.md")):
+            cont = parse_continuation(p.read_bytes().decode(), p.stem, p)
+            if cont.variant and cont.variant not in variants:
+                raise CaseError(f"continuation {cont.id}: unknown variant {cont.variant!r}; "
+                                f"this case has: {', '.join(variants)}")
+            if cont.sim and cont.sim not in sims:
+                raise CaseError(f"continuation {cont.id}: unknown sim {cont.sim!r}; "
+                                f"this case has: {', '.join(sims)}")
+            continuations[cont.id] = cont
+
     mock = _table(data, "mock", required=False)
     return Case(name=name, root=root, runs_dir=runs_dir, adapter=adapter, subject_seat=subject_seat,
                 opening=opening, stop_pattern=stop_pattern, variants=variants, sim_seat=sim_seat,
@@ -261,7 +400,8 @@ def load_case(path: str | Path) -> Case:
                 rubric_path=rubric_path, rubric=rubric, answer_key_path=answer_key_path,
                 judge_seat=judge_seat, judge_default=judge_default, checks_path=checks_path,
                 allowed_tools=allowed_tools, scenario_dir=scenario_dir, scenario_exclude=exclude,
-                subject_options=options)
+                subject_options=options, continuations=continuations, context_path=context_path,
+                context_raw=context_raw, max_prompt_chars=max_prompt_chars)
 
 
 def load_persona(path: Path, case_root: Path) -> Persona:

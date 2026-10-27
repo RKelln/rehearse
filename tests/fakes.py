@@ -37,6 +37,83 @@ sys.exit(step.get("exit", 0))
 """
 
 
+FAKE_OPENCODE = """#!{python}
+import json, os, sys
+log = os.environ["FAKE_LOG"]
+script = json.load(open(os.environ["FAKE_SCRIPT"]))
+n = sum(1 for _ in open(log)) if os.path.exists(log) else 0
+home = os.environ.get("HOME", "")
+rec = {{"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ), "stdin": sys.stdin.read(),
+        "home_listing": sorted(os.listdir(home)) if os.path.isdir(home) else None,
+        "home_mode": os.stat(home).st_mode & 0o777 if os.path.isdir(home) else None}}
+with open(log, "a") as f:
+    f.write(json.dumps(rec) + "\\n")
+step = script[min(n, len(script) - 1)]
+for rel, text in (step.get("write") or {{}}).items():
+    with open(rel, "w") as f:
+        f.write(text)
+if step.get("sleep"):
+    import subprocess, time
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    open(log + ".pid", "w").write(str(child.pid))
+    time.sleep(step["sleep"])
+sys.stdout.write(step.get("stdout", ""))
+sys.stderr.write(step.get("stderr", ""))
+sys.exit(step.get("exit", 0))
+"""
+
+
+class FakeOpencode:
+    """A script standing in for the `opencode` program. Records argv, cwd and environment; replies from `steps`.
+
+    Each step is {"stdout", "stderr", "exit", "write": {file: text}, "sleep"}; the last step repeats.
+    """
+
+    def __init__(self, folder: Path, steps: list[dict]):
+        folder.mkdir(parents=True, exist_ok=True)
+        self.bin = folder / "opencode"
+        self.log = folder / "calls.jsonl"
+        self.script = folder / "script.json"
+        self.bin.write_text(FAKE_OPENCODE.format(python=sys.executable))
+        self.bin.chmod(self.bin.stat().st_mode | stat.S_IXUSR)
+        self.script.write_text(json.dumps(steps))
+        self.patcher = mock.patch.dict(os.environ, {
+            "REHEARSE_OPENCODE_BIN": str(self.bin), "FAKE_LOG": str(self.log), "FAKE_SCRIPT": str(self.script)})
+
+    def __enter__(self):
+        self.patcher.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.patcher.stop()
+
+    @property
+    def calls(self) -> list[dict]:
+        if not self.log.exists():
+            return []
+        return [json.loads(l) for l in self.log.read_text().splitlines()]
+
+
+def oc_events(texts=("done",), sid="ses_1", tools=(), tokens=(10, 4, 0, 2, 1), cost=0):
+    """JSON lines for one opencode turn.
+
+    `tools` is a list of (tool, input dict), each before the final texts. `tokens` is
+    (input, output, reasoning, cache read, cache write).
+    """
+    def ev(kind, part):
+        return json.dumps({"type": kind, "timestamp": 1, "sessionID": sid, "part": part})
+    t_in, t_out, t_reason, c_read, c_write = tokens
+    lines = [ev("step_start", {"type": "step-start"}), ev("text", {"type": "text", "text": "thinking aloud"})] if tools else []
+    for i, (name, tool_input) in enumerate(tools):
+        lines.append(ev("tool_use", {"type": "tool", "tool": name, "callID": f"c{i}",
+                                     "state": {"status": "completed", "input": tool_input, "output": "ok", "title": name}}))
+    lines += [ev("text", {"type": "text", "text": t}) for t in texts]
+    lines.append(ev("step_finish", {"type": "step-finish", "reason": "stop", "cost": cost,
+                                    "tokens": {"input": t_in, "output": t_out, "reasoning": t_reason,
+                                               "cache": {"read": c_read, "write": c_write}}}))
+    return "\n".join(lines) + "\n"
+
+
 class FakeClaude:
     """A script standing in for the `claude` program. Records every call; replies from `steps`.
 

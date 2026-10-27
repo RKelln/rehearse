@@ -117,8 +117,9 @@ Every sim is wrapped in a shared frame (`frames/sim.md`, overridable per case): 
 a chat; reply only with what the person types; keep it short; use only the knowledge page or small,
 boring details that fit it; never invent facts that matter; answer only what was asked; don't
 volunteer what the other side has not raised; say the stop word when nothing is left.
-The run stops when the sim's reply, ignoring spaces, quotes and punctuation, is the stop word, or when
-its last word is the stop word (the run records when the sim added other words).
+The run stops when the sim's reply, ignoring spaces, quotes and punctuation, is the stop word (any
+case), or when its last word is the stop word written exactly as given, so "Thanks! DONE" stops but
+"It's done." does not (the run records when the sim added other words).
 
 Sims run with no tools, in an empty working folder, with no settings or memory loaded, on a model
 named in the suite. A cheaper model than the subject is usually fine for a sim.
@@ -143,8 +144,12 @@ stop rules: the sim says its stop word; the subject's reply matches the case's s
 
 - `chat`: start from a prefilled transcript in the case (`continuations/*.md`). Each one has a
   purpose and a list of expectations in plain words. The expectations become rubric questions for
-  that continuation; neither the purpose nor the expectations reach the subject. Prefilled turns are
-  replayed as text, not as the model's own earlier turns, and the run records that.
+  that continuation; neither the purpose nor the expectations reach the subject. The prefilled turns
+  are sent as ordinary messages (the subject's own earlier turns as assistant messages), but the
+  subject did not really produce them, so a reply to them is evidence about one step, not about a
+  whole conversation. The run records `prefill_mode: "messages"` and marks each prefilled turn.
+  By default the subject gives exactly one reply; a continuation may name a sim to carry on from
+  there. See [`CHECKS.md`](CHECKS.md#focused-continuations).
 - `agent`: save a checkpoint session after turn N of a reference run, then fork it
   (`claude -p --resume ID --fork-session`) with a different sim reply. One reference run can feed
   many cheap checks of a single step.
@@ -202,11 +207,11 @@ assessments committed).
 ```
 rehearse run CASE --variant V --sim S [--repeats N] [--max-usd X]     one cell
 rehearse suite CASE [--sims a,b] [--variants a,b] [--repeats N] [--jobs J] [--max-usd X] [--dry-run]
-rehearse continue CASE CHECKPOINT --sim-reply FILE                    a focused continuation
+rehearse continue CASE [--only ids] [--variants a,b] [--repeats N]    focused continuations (chat)
 rehearse check RUN...            rerun checks on saved runs (free, no model calls)
 rehearse judge RUN...            judge saved runs
 rehearse board RUNS...           scoreboard: variant × sim × check, "k of n"
-rehearse compare BEFORE AFTER    what moved between two sets of runs
+rehearse compare BEFORE AFTER [--pair OLD=NEW]   what moved between two sets of runs
 rehearse import FOLDER           bring in runs made before this tool existed
 ```
 
@@ -220,6 +225,7 @@ print that estimate and ask before starting, unless `--yes` is passed.
 | Backend | How | Notes |
 |---|---|---|
 | `claude` | `claude -p --output-format stream-json`, `--resume`, `--fork-session`, `--allowedTools`, `--tools ""` for sims, `--setting-sources ""` | subscription or key; JSON has `total_cost_usd`, cumulative per session |
+| `opencode` | `opencode run --standalone --format json`, `-s ID [--fork]`, permissions and provider in `OPENCODE_CONFIG_CONTENT` | agent seats on any provider; cost only from configured prices |
 | `codex` | `codex exec` | |
 | `gemini` | `gemini -p` | |
 | `openai` | any OpenAI-compatible HTTP endpoint (keys from the environment) | for chat subjects and sims |

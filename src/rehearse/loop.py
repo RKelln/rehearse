@@ -2,7 +2,8 @@
 
 Stop rules, in the order they are checked after each subject reply:
   subject-stop  the subject's reply matches the case's stop_pattern
-  turn-cap      the subject has replied max_turns times
+  turn-cap      the subject has replied max_turns times (new replies only, after a prefill)
+  continuation-done  a focused continuation without a sim: the subject has given its one reply
 then after each sim reply:
   sim-stop      the sim's reply is its stop word, or ends with it (see `is_stop`)
   error: ...    a backend failed, or the sim answered with nothing twice
@@ -35,6 +36,7 @@ class Turn:
     text: str
     call: str | None = None   # file name in raw/ of the seat call that made this turn
     label_stripped: bool = False   # the sim wrote a "Name:" label and it was removed
+    prefilled: bool = False        # written in advance (a focused continuation), not generated
 
 
 @dataclass
@@ -51,6 +53,10 @@ class Outcome:
     def count(self, side: str) -> int:
         return sum(1 for t in self.turns if t.side == side and not (side == "person" and t.n == 0))
 
+    def generated(self, side: str) -> int:
+        """Turns a seat really produced in this run (prefilled turns are not counted)."""
+        return sum(1 for t in self.turns if t.side == side and not t.prefilled)
+
 
 class _Halt(Exception):
     def __init__(self, reason: str, quota: QuotaError | None = None):
@@ -62,14 +68,15 @@ class _Halt(Exception):
 def is_stop(text: str, stop: str) -> tuple[bool, bool]:
     """Does the sim's reply end the talk? Returns (stops, with_extra_text).
 
-    It stops when the reply, minus surrounding spaces, quotes and punctuation, is the stop word,
-    or when the reply's last word is the stop word. Case does not matter.
+    It stops when the reply, minus surrounding spaces, quotes and punctuation, is the stop word in
+    any case ("done."), or when the reply's last word is the stop word written exactly as given
+    ("Thanks! DONE"). A last word in other case is ordinary speech: "It's done." does not stop.
     """
-    word = stop.strip(_EDGE).lower()
-    if text.strip(_EDGE).lower() == word:
+    word = stop.strip(_EDGE)
+    if text.strip(_EDGE).lower() == word.lower():
         return True, False
     tokens = text.split()
-    if tokens and tokens[-1].strip(_EDGE).lower() == word:
+    if tokens and tokens[-1].strip(_EDGE) == word:
         return True, True
     return False, False
 
@@ -128,32 +135,55 @@ def _sim_reply(out: Outcome, sim: Backend, persona: Persona, frame: str, turn_no
     raise _Halt("error: the sim gave an empty reply twice")
 
 
-def run_conversation(case: Case, adapter: ChatAdapter, sim: Backend, persona: Persona,
-                     frame: str) -> Outcome:
+def prefill_turns(turns: list[tuple[str, str]]) -> list[Turn]:
+    """A continuation's (side, text) pairs as numbered, prefilled turns: the person's first is 0."""
+    out, counts = [], {"person": 0, "subject": 0}
+    for side, text in turns:
+        counts[side] += 1
+        out.append(Turn(side, counts[side] - (1 if side == "person" else 0), text, prefilled=True))
+    return out
+
+
+def run_conversation(case: Case, adapter: ChatAdapter, sim: Backend | None, persona: Persona | None,
+                     frame: str, prefill: list[Turn] | None = None, max_turns: int | None = None) -> Outcome:
     """Run one conversation and return everything that happened.
+
+    `prefill` starts it from written turns (a focused continuation). With no `persona` the subject
+    gives exactly one reply and the run stops with `continuation-done`; with one, the conversation
+    goes on as usual, and `max_turns` (default: the case's) counts only the subject's new replies.
 
     Backend failures end the run with a stop reason; a QuotaError is returned in `quota` and a
     Ctrl-C sets `interrupted`, so the caller can save the run first and then re-raise.
     """
     out = Outcome(started=_now())
-    opening = persona.opening or case.opening
+    cap = max_turns or case.max_turns
+    one_reply = bool(prefill) and persona is None
+    opening = prefill[0].text if prefill else persona.opening or case.opening
     try:
-        if not opening:
-            raise _Halt("error: no opening line: set 'opening' in the persona or in [subject]")
-        out.turns.append(Turn("person", 0, opening))
+        if prefill:
+            out.turns.extend(prefill)
+        else:
+            if not opening:
+                raise _Halt("error: no opening line: set 'opening' in the persona or in [subject]")
+            out.turns.append(Turn("person", 0, opening))
         while True:
             res, name = _call(out, "subject", lambda: adapter.reply(out.turns), lambda: adapter.last_request)
             if not res.text.strip():
                 raise _Halt("error: the subject gave an empty reply")
             n = out.count("subject") + 1
             out.turns.append(Turn("subject", n, res.text.strip(), name))
+            if one_reply:
+                out.stop = "continuation-done"
+                break
             if case.stop_pattern and case.stop_pattern.search(res.text):
                 out.stop = "subject-stop"
                 break
-            if n >= case.max_turns:
+            if out.generated("subject") >= cap:
                 out.stop = "turn-cap"
                 break
-            text, name, stripped = _sim_reply(out, sim, persona, frame, n, opening)
+            # The escalation line follows the sim's own generated replies, not prefilled ones.
+            sim_no = 1 + sum(1 for t in out.turns if t.side == "person" and t.n >= 1 and not t.prefilled)
+            text, name, stripped = _sim_reply(out, sim, persona, frame, sim_no, opening)
             out.turns.append(Turn("person", n, text, name, stripped))
             stops, with_text = is_stop(text, persona.stop)
             if stops:

@@ -52,7 +52,7 @@ class SnapshotAndMetaTests(CaseTest):
 
     def test_turns_jsonl_and_new_meta_fields(self):
         case = load_case(make_case(self.root, stop_pattern="(?i)bye", max_turns=4,
-                                   subject_replies=["a", "b"], sim_replies=["x", "ok, done"]))
+                                   subject_replies=["a", "b"], sim_replies=["x", "ok, DONE"]))
         res = execute_run(case, "baseline", "dana", today=TODAY, repeat=3)
         rows = [json.loads(l) for l in (res.path / "turns.jsonl").read_text().splitlines()]
         self.assertEqual([(r["side"], r["n"]) for r in rows],

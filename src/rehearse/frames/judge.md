@@ -4,6 +4,8 @@ AI played the person; you will also check that it played the person well.
 
 What you are given, in labelled sections:
 - RUBRIC: numbered questions. Each may say what a pass looks like and what a fail looks like.
+- PURPOSE: present only for a focused continuation, whose first turns were written in advance (the
+  subject did not produce its own earlier turns). Judge the subject's new reply, using the earlier turns as context.
 - TRANSCRIPT: the conversation, turn by turn. Lines starting with "[tool]" are things the subject did
   with its tools, such as reading or writing a file.
 - FILES: the text of files the subject wrote, if any.
@@ -30,4 +32,4 @@ Reply with ONLY one JSON object, with no text before or after it and no code fen
 {"answers": [{"id": 1, "verdict": "pass", "quote": "..."}],
  "sim": {"in_character": "pass", "kept_up_mood": "pass", "used_only_knowledge": "pass", "quote": "..."}}
 
-Include one entry in "answers" for every question in the rubric, using its number as "id".
+Include one entry in "answers" for every question in the rubric, using its id exactly as written before the question (a number, or a label such as e1).

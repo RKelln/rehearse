@@ -14,13 +14,12 @@ import json
 import os
 import re
 import shutil
-import signal
-import subprocess
 import tempfile
 import weakref
 from pathlib import Path
 
 from .base import AgentSession, Backend, BackendError, Msg, QuotaError, SeatResult, SetupError
+from .process import run as run_program
 
 _QUOTA = re.compile(r"session limit|usage limit|rate limit|quota|resets \d", re.I)
 _ARG_KEYS = ("file_path", "path", "command", "pattern", "skill", "url", "description")
@@ -45,40 +44,8 @@ def claude_bin() -> str:
     return os.environ.get("REHEARSE_CLAUDE_BIN") or "claude"
 
 
-def _kill(proc: subprocess.Popen) -> None:
-    """Kill the program and everything it started (it runs in its own process group)."""
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
-    try:
-        proc.wait(5)
-    except subprocess.TimeoutExpired:
-        pass
-
-
 def _run(argv: list[str], stdin: str, cwd, timeout: float, label: str) -> dict:
-    """Run the tool and return {"stdout", "stderr", "returncode"}; the raw output is kept as is.
-
-    The tool gets its own process group, which is killed on a timeout or Ctrl-C, so no orphan is left.
-    """
-    try:
-        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, cwd=str(cwd), start_new_session=True)
-    except FileNotFoundError:
-        raise SetupError(f"cannot find the claude program ({argv[0]!r}). Install it, or set "
-                         "REHEARSE_CLAUDE_BIN to its path") from None
-    try:
-        out, err = proc.communicate(stdin, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        _kill(proc)
-        out, err = proc.communicate()
-        raise BackendError(f"{label}: timed out after {timeout:g} seconds",
-                           raw={"stdout": out, "stderr": err, "returncode": None}) from None
-    except BaseException:
-        _kill(proc)
-        raise
-    return {"stdout": out, "stderr": err, "returncode": proc.returncode}
+    return run_program(argv, stdin, cwd, timeout, label, program="claude", env_name="REHEARSE_CLAUDE_BIN")
 
 
 def _tail(text: str, n: int = 400) -> str:

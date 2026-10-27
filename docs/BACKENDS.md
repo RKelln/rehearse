@@ -11,6 +11,7 @@ In `case.toml`, a seat is a short string, `backend[:model]`:
 |---|---|
 | `mock` | scripted replies, for testing the tool. Costs nothing. Runs are marked "plumbing only". |
 | `claude:sonnet` | the `claude` command line program, with that model (the model is optional) |
+| `opencode:PROVIDER/MODEL` | the `opencode` command line program (agent seats only), such as `opencode:deepseek/deepseek-chat` |
 | `http:MODEL@BASE_URL` | any OpenAI-compatible endpoint, such as `http:llama3@http://localhost:11434/v1` |
 | `openai:MODEL` | `https://api.openai.com/v1`, key `OPENAI_API_KEY` |
 | `openrouter:MODEL` | `https://openrouter.ai/api/v1`, key `OPENROUTER_API_KEY`, 18 requests a minute |
@@ -34,6 +35,7 @@ seat = { backend = "http", model = "my-model", base_url = "http://127.0.0.1:8080
 | `rpm` | at most this many requests a minute to this endpoint |
 | `max_tokens`, `temperature` | sent to the server if given |
 | `setting_sources`, `max_budget_usd`, `tools`, `permission_mode` | claude only; see below |
+| `provider`, `permission` | opencode only; see below |
 
 ## Keys
 
@@ -53,6 +55,7 @@ A backend says what it supports, and the adapters check it before a run starts:
 |---|---|---|---|---|
 | `mock` | yes | yes | yes | yes |
 | `claude` | yes | yes | yes | yes |
+| `opencode` | no | yes | yes | yes |
 | `http` | yes | no | no | no |
 
 - A **chat** seat takes a system prompt and the whole conversation each turn and returns the reply.
@@ -123,6 +126,78 @@ folder shown as `./`), and the cost.
   killed, so no orphan keeps running.
 - Settings (in the seat table): `setting_sources` (default `project`), `timeout` (default 900 seconds),
   `max_budget_usd`. A `--max-usd` on the command line is passed on as `--max-budget-usd`.
+
+## The opencode backend
+
+The program is `opencode`, or whatever `REHEARSE_OPENCODE_BIN` names. It is an agent backend: it can run
+an agent subject but not a chat seat or the sim. Tested against opencode 2.0.x.
+
+**Seat.** `opencode:PROVIDER/MODEL`. For the provider names `deepseek`, `openai` and `openrouter`,
+rehearse knows the endpoint and key name, so `opencode:deepseek/deepseek-chat` needs no table. For anything
+else, use a table:
+
+```toml
+[subject]
+seat = { backend = "opencode", model = "mine/m1", price_in_per_mtok = 0.30, price_out_per_mtok = 1.20,
+         timeout = 600, provider = { base_url = "http://127.0.0.1:8080/v1", key_env = "MY_KEY",
+                                     npm = "@ai-sdk/openai-compatible", models = ["m1", "m2"] } }
+```
+
+`provider` takes `base_url`, `key_env`, `npm` (default `@ai-sdk/openai-compatible`) and `models` (the model
+id in the seat is always included). A provider that opencode already knows, with no `provider` table here,
+gets no provider configuration from rehearse.
+
+**A turn** runs in the work folder as:
+
+```
+opencode run --standalone --format json -m PROVIDER/MODEL [-s SESSION_ID [--fork]] -- "message"
+```
+
+The message is an argument (after `--`, so it may start with `-`). The first turn has no `-s`; later turns
+continue the same session. The output is one JSON event per line. The reply is the text parts after the
+last tool call (all text parts, if there are none after it), joined with blank lines. Each tool call is
+recorded as its name and main argument (path, command, pattern or name), with the work folder shown as `./`.
+Unknown event types are ignored.
+
+- **Isolation.** Each session gets a private, empty `HOME` (removed when the session closes; a fork shares
+  its parent's, because the forked session lives there), `OPENCODE_DISABLE_AUTOUPDATE=1`, and no `XDG_*`
+  variables. All configuration goes in one variable, `OPENCODE_CONFIG_CONTENT`, so nothing from the
+  person's own opencode setup reaches the agent. Project skills (`.claude/skills`, `.agents/skills`,
+  `.opencode/skills`) and `AGENTS.md` are still read from the work folder.
+- **Keys.** Read the usual way (see Keys) and put only in the program's environment. The configuration
+  names the key as `{env:NAME}`, so its value is never in the configuration, the command line or a saved file.
+- **Instructions.** opencode obeys `AGENTS.md` but, with a clean `HOME`, not `CLAUDE.md`. If the work folder
+  has a `CLAUDE.md` and no `AGENTS.md`, rehearse adds `"instructions": ["CLAUDE.md"]` and records
+  `instructions_added` in the turn's extras.
+- **Permissions.** The case's `allowed_tools` (written Claude-style) become an opencode `permission` table
+  that denies everything else (`"*": "deny"`). A denied tool is not offered to the model at all.
+
+  | allowed tool | opencode permission |
+  |---|---|
+  | `Read` | `read` |
+  | `Glob`, `Grep` | `glob`, `grep` |
+  | `Write(X)`, `Edit(X)` | `edit` allowed for `X` only (`edit` covers write, edit and patch) |
+  | `Write`, `Edit` | `edit` allowed |
+  | `Bash(cmd *)` | `bash` allowed for `cmd *` only (`cmd:*` is read as `cmd *`) |
+  | `Skill` | `skill` |
+  | `WebFetch`, `WebSearch` | `webfetch`, `websearch` |
+  | anything else | no counterpart; stays denied |
+
+  `skill` is always allowed when the work folder has a skills folder. To write the table yourself, put
+  `permission = { ... }` in `[subject]` (or the seat table); it replaces the mapping. The permissions used
+  are recorded in each turn's extras.
+- **Cost.** opencode reports a cost of 0 when it has no prices, so rehearse never records that as known.
+  A non-zero reported cost is used. Otherwise, with `price_in_per_mtok` and `price_out_per_mtok` in the seat
+  table, cost is worked out from the summed tokens (input plus cache reads and writes, at the input price;
+  output plus reasoning, at the output price). With neither, cost is unknown.
+- **Fork.** `-s ID --fork` makes a new session id that keeps the old context; the fork tracks the new id and
+  the original is unchanged.
+- **Failure.** A line that is not a JSON object is an error that keeps the raw output. A non-zero exit with
+  events is used and the exit code recorded; with no events it is an error with the end of the error
+  output. Quota wording is looked for only in the error output and in `error` events. On a timeout or Ctrl-C
+  the program's whole process group is killed.
+- `timeout` (default 900 seconds) is the one setting. `max_budget_usd` is not passed on: opencode has no
+  such flag, so `--max-usd` cannot stop a turn that is already running.
 
 ## The agent's folder: not a sandbox
 

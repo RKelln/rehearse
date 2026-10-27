@@ -78,6 +78,12 @@ class Run:
         return [t["text"] for t in self.turns if t["side"] == "subject"]
 
     @property
+    def new_subject_turns(self) -> list[str]:
+        """What the subject really said in this run: `subject_turns` without the prefilled ones
+        of a focused continuation (the same list for an ordinary run)."""
+        return [t["text"] for t in self.turns if t["side"] == "subject" and not t.get("prefilled")]
+
+    @property
     def person_turns(self) -> list[str]:
         """What the person (the sim) said, in order, starting with the scripted opening."""
         return [t["text"] for t in self.turns if t["side"] == "person"]

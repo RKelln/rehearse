@@ -43,10 +43,10 @@ class LoopTests(CaseTest):
         self.assertEqual(len(sim.calls), 1)
 
     def test_sim_stop_with_extra_text_is_flagged(self):
-        out, *_ = self.converse(["a", "b"], ["x", "Thanks! done."])
+        out, *_ = self.converse(["a", "b"], ["x", "Thanks! DONE"])
         self.assertEqual(out.stop, "sim-stop")
         self.assertTrue(out.stop_with_text)
-        self.assertEqual(out.turns[-1].text, "Thanks! done.")
+        self.assertEqual(out.turns[-1].text, "Thanks! DONE")
 
     def test_bare_stop_word_is_not_flagged(self):
         out, *_ = self.converse(["a"], ['"Done."'])
@@ -62,7 +62,8 @@ class LoopTests(CaseTest):
         from rehearse.loop import is_stop
         cases = [("DONE", (True, False)), ("  'done!' ", (True, False)), ("ok. DONE", (True, True)),
                  ("Done with that part", (False, False)), ("undone", (False, False)),
-                 ("I am done now", (False, False)), ("", (False, False))]
+                 ("I am done now", (False, False)), ("", (False, False)),
+                 ("Yes, I got the flu shot Friday. It's done.", (False, False)), ("ok. done", (False, False))]
         for text, want in cases:
             self.assertEqual(is_stop(text, "DONE"), want, text)
 

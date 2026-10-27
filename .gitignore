@@ -3,7 +3,7 @@
 __pycache__
 .DS_Store
 /runs/
-/examples/mock-case/runs/
+/examples/*/runs/
 /.venv/
 /examples/agent-mock-case/runs/
 /examples/http-case/runs/

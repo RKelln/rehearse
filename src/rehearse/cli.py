@@ -15,7 +15,7 @@ from . import compare as compare_mod
 from .backends import BackendError, QuotaError, is_mock_spec, make_backend
 from .case import Case, CaseError, load_case
 from .checks import check_run, find_case_file
-from .judge import judge_run
+from .judge import judge_run, rubric_for_run
 from .cost import Spend, estimate_line, is_live, seat_is_mock
 from .runs import display_path, execute_run, find_runs, scrub
 
@@ -45,8 +45,8 @@ def _pick(case_names: dict, wanted: str | None, what: str) -> list[str]:
 
 def run_suite(case: Case, variants: list[str], sims: list[str], repeats: int,
               run_fn=None, out=None, max_usd: float | None = None, spend: Spend | None = None,
-              keep_work: bool = False, judge: bool = False) -> tuple[list, bool]:
-    """Run every variant x sim x repeat in turn.
+              keep_work: bool = False, judge: bool = False, cells: list | None = None) -> tuple[list, bool]:
+    """Run every variant x sim x repeat in turn (or the given `cells`, a list of (variant, sim, repeat)).
 
     A QuotaError stops the suite. So does reaching `max_usd`. The runs left are listed as 'not run'.
     `spend` collects the known cost per seat. Returns (results, stopped_early).
@@ -54,7 +54,7 @@ def run_suite(case: Case, variants: list[str], sims: list[str], repeats: int,
     run_fn = run_fn or execute_run
     out = out or _say
     spend = spend if spend is not None else Spend()
-    cells = [(v, s, r) for v in variants for s in sims for r in range(1, repeats + 1)]
+    cells = cells or [(v, s, r) for v in variants for s in sims for r in range(1, repeats + 1)]
     results, warned = [], set()
     for i, (v, s, r) in enumerate(cells):
         if max_usd is not None and spend.total >= max_usd:
@@ -94,6 +94,11 @@ def run_suite(case: Case, variants: list[str], sims: list[str], repeats: int,
                     out(f"not run: {v2} x {s2} (repeat {r2})")
                 return results, True
     return results, False
+
+
+def _run_continuation(case: Case, variant: str, label: str, **kw):
+    """run_suite's run function for a continuation labelled "cont:<id>"."""
+    return execute_run(case, variant, None, continuation=label[len("cont:"):], **kw)
 
 
 def _judge_one(folder, case: Case, seat, spend: Spend, out) -> dict:
@@ -136,10 +141,10 @@ def _judge_command(args) -> int:
             case = cases.setdefault(found, load_case(found))
         todo.append((folder, case))
     seats = {id(c): args.seat or c.judge_seat for _, c in todo}
-    for _, c in todo:
+    for folder, c in todo:
         if seats[id(c)] is None:
             raise CaseError("no judge seat: pass --seat or add [judge] seat = \"...\" to case.toml")
-        if not c.rubric:
+        if not rubric_for_run(c, folder):
             raise CaseError(f"case {c.name} has no rubric; add rubric = \"rubric.md\" to case.toml")
     live = any(not is_mock_spec(seats[id(c)]) for _, c in todo)
     names = ", ".join(dict.fromkeys(_seat_name(seats[id(c)]) for _, c in todo))
@@ -219,7 +224,13 @@ def _saved_runs_command(args) -> int:
         if args.command == "board":
             text = board_mod.board(args.runs, Path(args.out) if args.out else None)
         else:
-            text = compare_mod.compare(args.before, args.after)
+            pairs = {}
+            for spec in args.pair:
+                old, sep, new = spec.partition("=")
+                if not (sep and old.strip() and new.strip()):
+                    raise ValueError(f"--pair needs OLD=NEW, got {spec!r}")
+                pairs[old.strip()] = new.strip()
+            text = compare_mod.compare(args.before, args.after, pairs)
         _say(text)
         return 0
     except (CaseError, FileNotFoundError, ValueError) as e:
@@ -227,10 +238,11 @@ def _saved_runs_command(args) -> int:
         return 2
 
 
-def _live_flags(parser) -> None:
+def _live_flags(parser, keep_work: bool = True) -> None:
     parser.add_argument("--yes", action="store_true", help="do not ask before a live run")
     parser.add_argument("--max-usd", type=float, metavar="X", help="stop starting new runs once X dollars are spent")
-    parser.add_argument("--keep-work", action="store_true", help="keep an agent's work folder after the run")
+    if keep_work:
+        parser.add_argument("--keep-work", action="store_true", help="keep an agent's work folder after the run")
     parser.add_argument("--judge", action="store_true", help="judge each run right after its checks")
     parser.add_argument("--no-judge", action="store_true", help="do not judge (when the case judges by default)")
 
@@ -251,6 +263,13 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--repeats", type=int, default=1)
     s.add_argument("--dry-run", action="store_true", help="list the runs and the cost estimate; run nothing")
     _live_flags(s)
+    k = sub.add_parser("continue", help="run the case's focused continuations (prefilled transcripts)")
+    k.add_argument("case")
+    k.add_argument("--only", help="comma-separated continuation ids; default all")
+    k.add_argument("--variants", help="comma-separated; default all")
+    k.add_argument("--repeats", type=int, default=1)
+    k.add_argument("--dry-run", action="store_true", help="list the runs and the cost estimate; run nothing")
+    _live_flags(k, keep_work=False)
     c = sub.add_parser("check", help="rerun the checks on saved runs (no model calls)")
     c.add_argument("runs", nargs="+", help="run folders, or folders of run folders")
     c.add_argument("--case", help="the case folder or case.toml (default: found above each run)")
@@ -267,6 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     m = sub.add_parser("compare", help="what moved between two sets of runs")
     m.add_argument("before", help="a folder of runs (or several, comma-separated)")
     m.add_argument("after")
+    m.add_argument("--pair", action="append", default=[], metavar="OLD=NEW",
+                   help="compare the before variant OLD with the after variant NEW (repeatable)")
     args = parser.parse_args(argv)
     if args.command in ("check", "board", "compare"):
         return _saved_runs_command(args)
@@ -286,29 +307,57 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "max_usd", None) is not None and not (math.isfinite(args.max_usd) and args.max_usd > 0):
             raise CaseError("--max-usd must be a number more than 0")
         case = load_case(args.case)
-        if args.command == "run":
-            variants = _pick(case.variants, args.variant, "variant")
-            sims = _pick(case.sims, args.sim, "sim")
-        else:
+        cells = None
+        if args.command == "continue":
+            if not case.continuations:
+                raise CaseError("this case has no continuations: add a continuations folder "
+                                "(see docs/CHECKS.md, Focused continuations)")
             variants = _pick(case.variants, args.variants, "variant")
-            sims = _pick(case.sims, args.sims, "sim")
-        for s_ in sims:
-            case.persona(s_)       # fail now, not after spending, if a persona is broken
-        total = len(variants) * len(sims) * args.repeats
-        _say(f"{total} runs: {len(variants)} variants x {len(sims)} sims x {args.repeats} repeats")
-        for v in variants:
+            ids = _pick(case.continuations, args.only, "continuation")
+            for cid in ids:
+                if case.continuations[cid].sim:
+                    case.persona(case.continuations[cid].sim)
+            sims = [f"cont:{cid}" for cid in ids]
+            cells = [(v, f"cont:{cid}", r) for v in variants for cid in ids
+                     if case.continuations[cid].variant in (None, v) for r in range(1, args.repeats + 1)]
+            if not cells:
+                raise CaseError("no runs: the chosen continuations are limited to variants that were not chosen")
+            total = len(cells)
+            case.check_prompt_limit(variants)
+            _say(f"{total} runs: {len(ids)} continuations x variants ({', '.join(variants)}) x {args.repeats} repeats")
+            for v, s_, r in cells[::args.repeats]:
+                cont = case.continuations[s_[5:]]
+                mode = f"then sim {cont.sim}" if cont.sim else "one reply"
+                _say(f"  {v} x {s_} (x{args.repeats}): {sum(1 for t in cont.turns)} prefilled turns, {mode}")
+            sim_used = any(case.continuations[s_[5:]].sim for _, s_, _ in cells)
+            _say(f"seats: subject {_seat_name(case.subject_seat)}, sim "
+                 + (_seat_name(case.sim_seat) if sim_used else "none (no continuation names a sim)"))
+        else:
+            sim_used = True
+            if args.command == "run":
+                variants = _pick(case.variants, args.variant, "variant")
+                sims = _pick(case.sims, args.sim, "sim")
+            else:
+                variants = _pick(case.variants, args.variants, "variant")
+                sims = _pick(case.sims, args.sims, "sim")
             for s_ in sims:
-                _say(f"  {v} x {s_} (x{args.repeats})")
-        _say(f"seats: subject {_seat_name(case.subject_seat)}, sim {_seat_name(case.sim_seat)}")
-        _say(estimate_line(case, total))
-        if args.command == "suite" and args.dry_run:
+                case.persona(s_)       # fail now, not after spending, if a persona is broken
+            case.check_prompt_limit(variants)
+            total = len(variants) * len(sims) * args.repeats
+            _say(f"{total} runs: {len(variants)} variants x {len(sims)} sims x {args.repeats} repeats")
+            for v in variants:
+                for s_ in sims:
+                    _say(f"  {v} x {s_} (x{args.repeats})")
+            _say(f"seats: subject {_seat_name(case.subject_seat)}, sim {_seat_name(case.sim_seat)}")
+        _say(estimate_line(case, total, args.command == "continue", sim_used))
+        if args.command in ("suite", "continue") and args.dry_run:
             return 0
         if args.judge and args.no_judge:
             raise CaseError("use --judge or --no-judge, not both")
         judging = args.judge or (case.judge_default and not args.no_judge)
-        if judging and not (case.rubric and case.judge_seat):
+        if judging and not ((case.rubric or args.command == "continue") and case.judge_seat):
             raise CaseError("judging needs a rubric and a [judge] seat in case.toml")
-        live = is_live(case) or (judging and not is_mock_spec(case.judge_seat))
+        live = is_live(case, sim_used) or (judging and not is_mock_spec(case.judge_seat))
         if judging:
             _say(f"judge seat: {_seat_name(case.judge_seat)}")
         if live:
@@ -317,7 +366,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         spend = Spend()
         results, stopped = run_suite(case, variants, sims, args.repeats, max_usd=args.max_usd,
-                                     spend=spend, keep_work=args.keep_work, judge=judging)
+                                     spend=spend, keep_work=getattr(args, "keep_work", False), judge=judging,
+                                     cells=cells, run_fn=_run_continuation if cells else None)
         if live:
             _say(spend.line())
     except (CaseError, BackendError) as e:      # a quota error never gets here: run_suite handles it

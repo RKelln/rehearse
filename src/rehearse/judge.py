@@ -68,12 +68,34 @@ def _frame() -> str:
     return resources.files("rehearse").joinpath("frames", "judge.md").read_bytes().decode()
 
 
+def rubric_for_run(case: Case, folder) -> dict | None:
+    """The questions to ask about one saved run: the case rubric's, then the `expect` lines of the
+    continuation the run snapshot holds (ids e1, e2 ...). None when there are none.
+
+    Returns {"questions", "answer_key", "artifacts", "purpose"}; `purpose` is "" for an ordinary run.
+    """
+    from .case import parse_continuation
+    base = case.rubric or {"questions": [], "answer_key": False, "artifacts": True}
+    rubric = {**base, "questions": list(base["questions"]), "purpose": ""}
+    snap = Path(folder) / "inputs" / "continuation.md"
+    if snap.is_file():
+        cont = parse_continuation(snap.read_bytes().decode(), "snapshot", snap)
+        if not cont.rubric:
+            rubric["questions"] = []          # only the continuation's own expectations are asked
+        rubric["purpose"] = cont.purpose
+        rubric["questions"] += [{"id": f"e{i}", "question": e, "pass": "", "fail": ""}
+                                for i, e in enumerate(cont.expect, 1)]
+    return rubric if rubric["questions"] else None
+
+
 def _turns_text(run: Run) -> str:
     """The transcript for the judge: turns only, with the subject's tool calls inline. No variant name."""
     parts = []
     for t in run.turns:
         who = "PERSON" if t["side"] == "person" else "SUBJECT"
-        block = [f"{who} (turn {t.get('n', '?')}):"]
+        written = ", written in advance, not produced by the subject" if t.get("prefilled") and who == "SUBJECT" \
+            else ", written in advance" if t.get("prefilled") else ""
+        block = [f"{who} (turn {t.get('n', '?')}{written}):"]
         call = t.get("call")
         if call and t["side"] == "subject":
             try:
@@ -119,12 +141,20 @@ def build_request(run: Run, rubric: dict, answer_key: str | None) -> tuple[str, 
             lines.append(f"   Fail: {q['fail']}")
     persona = run.input("persona.md")
     mood = frontmatter.parse(persona)[0].get("mood", "") if persona else ""
-    sections = [("RUBRIC", "\n".join(lines)), ("TRANSCRIPT", transcript)]
+    sections = [("RUBRIC", "\n".join(lines))]
+    if rubric.get("purpose"):
+        sections.append(("PURPOSE", "This is a focused continuation: the conversation up to the subject's "
+                         "last reply was written in advance. Judge what the subject said after it.\n"
+                         + rubric["purpose"]))
+    sections.append(("TRANSCRIPT", transcript))
     if rubric["artifacts"]:
         sections.append(("FILES", files or "(the subject wrote no text files)"))
     if rubric["answer_key"] and answer_key is not None:
         sections.append(("ANSWER KEY", answer_key.strip()))
-    sections.append(("PERSON", f"Mood: {mood or '(none given)'}\n\nKnowledge page:\n{run.knowledge or '(none)'}"))
+    if persona or run.knowledge or not run.meta.get("continuation"):
+        sections.append(("PERSON", f"Mood: {mood or '(none given)'}\n\nKnowledge page:\n{run.knowledge or '(none)'}"))
+    else:
+        sections.append(("PERSON", "(no simulated person: the person's turns were written in advance)"))
     user = "\n\n".join(f"===== {name} =====\n{body}" for name, body in sections)
     return _frame(), user, transcript + "\n" + files
 
@@ -151,12 +181,12 @@ def _answers(rubric: dict, data: dict | None, evidence: str) -> list[dict]:
     got = {}
     for a in (data or {}).get("answers", []):
         try:
-            got[int(a.get("id"))] = a
-        except (TypeError, ValueError, AttributeError):
+            got[str(a.get("id")).strip()] = a
+        except AttributeError:
             continue
     hay, out = _norm(evidence), []
     for q in rubric["questions"]:
-        a = got.get(q["id"]) or {}
+        a = got.get(str(q["id"])) or {}
         verdict = a.get("verdict") if a.get("verdict") in VERDICTS else "unclear"
         quote = a.get("quote") if isinstance(a.get("quote"), str) else ""
         missing = False
@@ -177,7 +207,9 @@ def _sim(data: dict | None, evidence: str) -> dict:
     return sim
 
 
-def _void(sim: dict) -> tuple[bool, str]:
+def _void(sim: dict, sim_turns: bool = True) -> tuple[bool, str]:
+    if not sim_turns:
+        return False, ""      # no generated sim turns (a focused continuation): nothing to void on
     failed = [k for k in ("in_character", "used_only_knowledge") if sim[k] == "fail"]
     if not failed:
         return False, ""
@@ -209,7 +241,8 @@ def judge_run(folder, case: Case, backend=None, seat=None) -> dict:
     Any other failure, or a reply that is not the JSON asked for after one retry, is recorded as `error`.
     """
     from .runs import scrub_obj, write_json
-    if not case.rubric:
+    rubric = rubric_for_run(case, folder)
+    if not rubric:
         raise CaseError("this case has no rubric; add rubric = \"rubric.md\" to case.toml")
     seat = seat or case.judge_seat
     if seat is None:
@@ -218,7 +251,7 @@ def judge_run(folder, case: Case, backend=None, seat=None) -> dict:
     folder = Path(folder)
     run = Run.load(folder, case)
     key = case.answer_key_path.read_bytes().decode() if case.answer_key_path else None
-    system, user, evidence = build_request(run, case.rubric, key)
+    system, user, evidence = build_request(run, rubric, key)
     messages = [Msg("user", user)]
     (folder / "raw").mkdir(exist_ok=True)
     data, error, costs, model = None, None, [], None
@@ -245,13 +278,16 @@ def judge_run(folder, case: Case, backend=None, seat=None) -> dict:
         messages = messages + [Msg("assistant", res.text or ""), Msg("user", RETRY)]
     if data is not None:
         error = None
-    answers = _answers(case.rubric, data, evidence)
+    answers = _answers(rubric, data, evidence)
     sim = _sim(data, evidence)
-    void, reason = _void(sim)
+    void, reason = _void(sim, any(t["side"] == "person" and not t.get("prefilled") and t["n"] >= 1
+                                  for t in run.turns) or not run.meta.get("continuation"))
     known = [c for c in costs if c is not None]
     result = {"judged_at": _utc(), "seat": backend.describe(), "model": model,
               "cost_usd": sum(known) if known and len(known) == len(costs) else None,
-              "rubric_sha256": hashlib.sha256(case.rubric_path.read_bytes()).hexdigest(),
+              "rubric_sha256": hashlib.sha256(case.rubric_path.read_bytes()).hexdigest() if case.rubric_path else None,
+              "continuation_sha256": hashlib.sha256((folder / "inputs" / "continuation.md").read_bytes()).hexdigest()
+              if (folder / "inputs" / "continuation.md").is_file() else None,
               "answers": answers, "sim": sim, "void": void, "void_reason": reason, "error": error}
     target = folder / "judge.json"
     _archive(target, "judge")

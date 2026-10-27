@@ -83,3 +83,12 @@ class ImportInputsTests(ImportTests):
     def test_input_names_are_plain(self):
         with self.assertRaises(ValueError):
             self.write(inputs={"../knowledge.md": "x"})
+
+    def test_subject_first_numbering_and_prefilled_flag(self):
+        p = self.write(turns=[{"side": "subject", "text": "Q1", "prefilled": True},
+                              {"side": "person", "text": "A1", "prefilled": True},
+                              {"side": "subject", "text": "Q2"}])
+        rows = [json.loads(l) for l in (p / "turns.jsonl").read_text().splitlines()]
+        self.assertEqual([(r["side"], r["n"], bool(r.get("prefilled"))) for r in rows],
+                         [("subject", 1, True), ("person", 1, True), ("subject", 2, False)])
+

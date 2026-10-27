@@ -107,7 +107,10 @@ def sim_check(run) -> dict:
     if str((run.meta.get("seats") or {}).get("sim", "")).startswith("human"):
         return {"result": "skip", "items": [_item("played_by_a_person", "skip", "a person played this side")],
                 "void": False, "void_reason": ""}
-    replies = [t for t in run.turns if t["side"] == "person" and t["n"] >= 1]
+    replies = [t for t in run.turns if t["side"] == "person" and t["n"] >= 1 and not t.get("prefilled")]
+    if run.meta.get("continuation") and not replies:
+        return {"result": "skip", "items": [_item("no_sim_turns", "skip", "no sim turns: a focused continuation")],
+                "void": False, "void_reason": ""}
     stop_word = run.meta.get("sim_stop_word") or "DONE"
     items = []
 
@@ -152,7 +155,8 @@ def sim_check(run) -> dict:
     for t in replies:
         seen = set(known)
         for s_ in run.turns:
-            if s_["side"] == "person" and s_["n"] == 0 or s_["side"] == "subject" and s_["n"] <= t["n"]:
+            if (s_["side"] == "person" and (s_["n"] == 0 or s_.get("prefilled"))
+                    or s_["side"] == "subject" and s_["n"] <= t["n"]):
                 seen |= known_numbers(s_["text"])
         for shown, alts in claims(t["text"]):
             if not alts & seen and shown not in invented:

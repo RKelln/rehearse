@@ -20,8 +20,8 @@ from .adapters import make_adapter, require
 from .workspace import Workspace
 from .backends import Backend, make_backend
 from .backends.keys import scrub_keys
-from .case import Case
-from .loop import Outcome, run_conversation
+from .case import Case, Continuation
+from .loop import Outcome, prefill_turns, run_conversation
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
@@ -161,17 +161,22 @@ def _models(calls: list[dict], seat: str) -> list[str]:
     return sorted({c["result"]["model"] for c in calls if c["seat"] == seat and c["result"].get("model")})
 
 
-def _transcript(case: Case, variant: str, sim: str, seats: dict, out: Outcome, mock: bool) -> str:
+def _transcript(case: Case, variant: str, sim: str, seats: dict, out: Outcome, mock: bool,
+                cont: Continuation | None = None) -> str:
     lines = [f"# {case.name}: {variant} with {sim}", "",
              f"- Case: {case.name}", f"- Variant: {variant}", f"- Sim: {sim}",
              f"- Seats: subject {seats['subject']}, sim {seats['sim']}",
              f"- Stop reason: {out.stop}",
              f"- Subject turns: {out.count('subject')}"]
+    if cont:
+        k = sum(1 for t in out.turns if t.prefilled)
+        lines.append(f"- Focused continuation: {cont.id}; the first {k} turns were written in advance "
+                     "(prefilled) and not produced by the subject")
     if mock:
         lines.append("- PLUMBING ONLY, NOT A RESULT: every seat was the mock backend.")
     for t in out.turns:
         who = "Person" if t.side == "person" else "Subject"
-        lines += ["", f"## {who} (turn {t.n})", "", t.text]
+        lines += ["", f"## {who} (turn {t.n}{', prefilled' if t.prefilled else ''})", "", t.text]
     return "\n".join(lines) + "\n"
 
 
@@ -179,9 +184,10 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def execute_run(case: Case, variant: str, sim: str, subject: Backend | None = None,
+def execute_run(case: Case, variant: str, sim: str | None, subject: Backend | None = None,
                 sim_backend: Backend | None = None, today: date | None = None,
-                repeat: int = 1, budget_usd: float | None = None, keep_work: bool = False) -> RunResult:
+                repeat: int = 1, budget_usd: float | None = None, keep_work: bool = False,
+                continuation: str | None = None) -> RunResult:
     """Run one conversation and save the run folder.
 
     Raises QuotaError (with `run_path` set) or KeyboardInterrupt after saving, if either happened.
@@ -189,31 +195,44 @@ def execute_run(case: Case, variant: str, sim: str, subject: Backend | None = No
     run's number within its suite (1 for a single run); the folder number is separate.
     `budget_usd` is passed on to backends that can enforce it. `keep_work` keeps an agent's work
     folder (its path is printed) instead of deleting it.
+
+    `continuation` names a focused continuation: the run starts from its prefilled turns and
+    `sim` is ignored (the continuation's own `sim`, if any, plays the person). Its sim label is
+    "cont:<id>".
     """
     # Snapshot every input once, so what is saved is exactly what the conversation used.
-    persona = case.persona(sim)
+    cont = case.continuations[continuation] if continuation else None
+    case.check_prompt_limit([variant])
+    sim_name = (cont.sim if cont else sim)
+    persona = case.persona(sim_name) if sim_name else None
     overlay = case.variants[variant]
     variant_text = overlay.read_bytes().decode() if overlay and overlay.is_file() else ""
     frame = case.frame_text()
     subject = subject or make_backend(case.subject_seat, replies=case.mock_subject, default="Tell me more.")
-    sim_backend = sim_backend or make_backend(case.sim_seat, replies=case.mock_sim, default="Okay.")
-    require(sim_backend, "chat")
+    if persona:
+        sim_backend = sim_backend or make_backend(case.sim_seat, replies=case.mock_sim, default="Okay.")
+        require(sim_backend, "chat")
+    else:
+        sim_backend = None
     for backend in (subject, sim_backend):
-        backend.max_budget_usd = budget_usd
+        if backend:
+            backend.max_budget_usd = budget_usd
     work = None
     try:
         if case.adapter == "agent":
             work = Workspace.create(case, variant)
             work.guard(case)
-        adapter = make_adapter(case.adapter, subject, variant_text,
+        adapter = make_adapter(case.adapter, subject, case.system_text(variant_text),
                                workdir=work.path if work else None, allowed_tools=case.allowed_tools,
                                options=case.subject_options)
         try:
-            out = run_conversation(case, adapter, sim_backend, persona, frame)
+            out = run_conversation(case, adapter, sim_backend, persona, frame,
+                                   prefill=prefill_turns(cont.turns) if cont else None,
+                                   max_turns=cont.max_turns if cont else None)
         finally:
             adapter.close()
-        return _save(case, variant, sim, repeat, today, subject, sim_backend, persona, variant_text,
-                     frame, out, work)
+        return _save(case, variant, f"cont:{cont.id}" if cont else sim, repeat, today, subject, sim_backend,
+                     persona, variant_text, frame, out, work, cont)
     finally:
         if work:
             if keep_work:
@@ -222,26 +241,36 @@ def execute_run(case: Case, variant: str, sim: str, subject: Backend | None = No
                 work.cleanup()
 
 
-def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, variant_text, frame,
-          out, work) -> RunResult:
-    path, n = make_run_dir(case.runs_dir, case.name, variant, sim, today)
-    seats = {"subject": subject.describe(), "sim": sim_backend.describe()}
-    mock = subject.is_mock and sim_backend.is_mock
+def _prefill_sha(turns) -> str:
+    """Hash of the prefilled turns alone: who said what, in order."""
+    return _sha(json.dumps([[t.side, t.text] for t in turns if t.prefilled], ensure_ascii=False))
 
-    write_text(path / "transcript.md", _transcript(case, variant, sim, seats, out, mock))
+
+def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, variant_text, frame,
+          out, work, cont=None) -> RunResult:
+    path, n = make_run_dir(case.runs_dir, case.name, variant, sim, today)
+    seats = {"subject": subject.describe(), "sim": sim_backend.describe() if sim_backend else "none"}
+    mock = subject.is_mock and (sim_backend is None or sim_backend.is_mock)
+
+    write_text(path / "transcript.md", _transcript(case, variant, sim, seats, out, mock, cont))
     lines = [json.dumps(scrub_obj(
         {"side": t.side, "n": t.n, "text": t.text, **({"call": t.call} if t.call else {}),
-         **({"label_stripped": True} if t.label_stripped else {})}),
+         **({"label_stripped": True} if t.label_stripped else {}),
+         **({"prefilled": True} if t.prefilled else {})}),
         ensure_ascii=False) for t in out.turns]
     (path / "turns.jsonl").write_text("\n".join(lines) + "\n")
     (path / "inputs").mkdir()
-    sources = {"persona.md": persona.raw, "frame.md": frame}
+    sources = {"persona.md": persona.raw, "frame.md": frame} if persona else {}
+    if cont:
+        sources["continuation.md"] = cont.raw
+    if case.context_raw.strip():
+        sources["context.md"] = case.context_raw
     if case.adapter == "chat":
         sources["variant.md"] = variant_text
     elif work:
         for rel in sorted(work.overlay):
             sources[f"variant/{rel}"] = (case.variants[variant] / rel).read_bytes().decode("utf-8", "replace")
-    if persona.knowledge_path:
+    if persona and persona.knowledge_path:
         sources["knowledge.md"] = persona.knowledge_raw
     manifest = {}
     for name, text in sources.items():
@@ -260,19 +289,31 @@ def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, vari
         write_json(path / "raw" / c["file"], {"request": c["request"], "result": c["result"]})
 
     cost = {"subject": _cost(out.calls, "subject"), "sim": _cost(out.calls, "sim")}
+    one_reply = cont is not None and persona is None
     meta = {
         "case": case.name, "variant": variant, "sim": sim, "repeat": repeat, "folder_number": n,
         "adapter": case.adapter, "seats": seats,
         "models": {"subject": _models(out.calls, "subject"), "sim": _models(out.calls, "sim")},
         "cost": cost,
         "turns": {"subject": out.count("subject"), "person": out.count("person")},
-        "max_turns": case.max_turns,
+        "max_turns": 1 if one_reply else (cont.max_turns if cont and cont.max_turns else case.max_turns),
         "subject_stop_pattern": case.stop_pattern.pattern if case.stop_pattern else None,
-        "sim_stop_word": persona.stop,
+        "sim_stop_word": persona.stop if persona else None,
         "stop_reason": out.stop, "stop_with_text": out.stop_with_text,
         "started": out.started, "ended": out.ended,
         "rehearse_version": __version__, "case_commit": git_commit(case.root), "mock": mock,
     }
+    if case.context_raw.strip():
+        meta["context_sha256"] = _sha(case.context_raw)
+    if case.max_prompt_chars:
+        meta["max_prompt_chars"] = case.max_prompt_chars
+        meta["prompt_chars"] = len(variant_text)
+    if cont:
+        # The prefilled turns went to the subject as ordinary messages; it did not really produce
+        # its own earlier turns.
+        meta.update({"continuation": cont.id, "prefilled_turns": sum(t.prefilled for t in out.turns),
+                     "prefill_sha256": _prefill_sha(out.turns), "prefill_mode": "messages",
+                     "sim_used": persona is not None, "persona": persona.sim if persona else None})
     write_json(path / "meta.json", meta)
     write_text(path / "assessment.md",
                f"# Assessment: {case.name}, {variant} with {sim}\n\nRead transcript.md.\n\n"
@@ -285,5 +326,5 @@ def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, vari
         raise out.quota
     if out.interrupted:
         raise KeyboardInterrupt
-    return RunResult(path, out.stop, out.count("subject"), mock, out, cost,
-                     {"subject": subject.is_mock, "sim": sim_backend.is_mock})
+    return RunResult(path, out.stop, out.generated("subject"), mock, out, cost,
+                     {"subject": subject.is_mock, "sim": sim_backend.is_mock if sim_backend else False})

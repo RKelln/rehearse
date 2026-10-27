@@ -4,6 +4,7 @@
     claude[:model]               the `claude` command line tool (chat seats and agent seats)
     http:MODEL@BASE_URL          any OpenAI-compatible endpoint
     openai:MODEL  openrouter:MODEL  deepseek[:MODEL]     http with the endpoint and key name filled in
+    opencode:PROVIDER/MODEL      the `opencode` command line tool (agent seats)
 """
 
 from __future__ import annotations
@@ -16,10 +17,10 @@ PRESETS = {
     "openrouter": {"base_url": "https://openrouter.ai/api/v1", "key_env": "OPENROUTER_API_KEY", "rpm": 18},
     "deepseek": {"base_url": "https://api.deepseek.com", "key_env": "DEEPSEEK_API_KEY", "model": "deepseek-chat"},
 }
-KNOWN = ("mock", "claude", "http", *PRESETS)
+KNOWN = ("mock", "claude", "http", *PRESETS, "opencode")
 TABLE_KEYS = ("backend", "model", "base_url", "key_env", "price_in_per_mtok", "price_out_per_mtok",
               "timeout", "rpm", "setting_sources", "max_tokens", "temperature", "max_budget_usd",
-              "tools", "permission_mode")
+              "tools", "permission_mode", "provider", "permission")
 _NUMBERS = ("price_in_per_mtok", "price_out_per_mtok", "timeout", "rpm", "max_tokens", "temperature",
             "max_budget_usd")
 
@@ -31,7 +32,7 @@ def _unknown(name, seat):
 def parse_seat_spec(seat) -> dict:
     """Read a seat, a "backend[:model]" string or a table, into one spec dict.
 
-    The dict always has "backend" ("mock", "claude" or "http") and "model". An http spec also has
+    The dict always has "backend" ("mock", "claude", "opencode" or "http") and "model". An http spec also has
     "base_url" and "key_env". Presets (openai, openrouter, deepseek) become http specs.
     """
     if isinstance(seat, dict):
@@ -57,6 +58,9 @@ def parse_seat_spec(seat) -> dict:
             spec = {"model": model, "base_url": url}
         elif rest:
             spec = {"model": rest}
+    for key in ("provider", "permission"):
+        if key in spec and not isinstance(spec[key], dict):
+            raise BackendError(f"seat setting {key!r} must be a table")
     if "tools" in spec and not (isinstance(spec["tools"], list) and all(isinstance(t, str) for t in spec["tools"])):
         raise BackendError("seat setting 'tools' must be a list of tool names")
     preset = name if name in PRESETS else None
@@ -90,6 +94,9 @@ def make_backend(seat, **opts) -> Backend:
     if spec["backend"] == "http":
         from .http import HttpBackend
         return HttpBackend(spec)
+    if spec["backend"] == "opencode":
+        from .opencode import OpenCodeBackend
+        return OpenCodeBackend(spec)
     from .claude import ClaudeBackend
     return ClaudeBackend(spec)
 

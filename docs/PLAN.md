@@ -1,6 +1,6 @@
 # Plan
 
-Status: steps 1 to 3 and 5 built; step 4 built except its live agent run. Later steps need approval before they start.
+Status: steps 1 to 3 and 5 built; step 4 built except its live agent run; step 6a built (chat continuations, context, prompt limit; the agent fork, codex backend and interviewer live runs remain). Later steps need approval before they start.
 
 This plan builds the tool described in [`DESIGN.md`](DESIGN.md) in small steps. Each step ends with
 passing tests on the `mock` backend (a scripted stand-in for a model, so no model is called and

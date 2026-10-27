@@ -27,8 +27,8 @@ def write_imported_run(case: Case, *, variant: str, sim: str, turns: list[dict],
     """Save an outside run into the case's runs folder and return its path.
 
     `turns`: dicts with `side` ("person" or "subject") and `text`, optionally `tool_calls`
-    (a list of {"name", "arg"}). They are numbered here: the person's first turn is 0, the
-    subject's first is 1. `artifacts`: file path in the work folder to bytes. `meta`: anything
+    (a list of {"name", "arg"}) and `prefilled` (True for a turn written in advance). They are numbered here: the subject's first turn is 1; the person's first is 0 (the opening line),
+    or, if the subject spoke first, the person's turns are numbered by the subject turn they reply to. `artifacts`: file path in the work folder to bytes. `meta`: anything
     known about the run (`seats`, `models`, `cost` per seat, `stop_reason`, and so on); it
     overrides the defaults. `source` is a path relative to the case folder. No diff.json is
     written, so checks about files written skip.
@@ -43,11 +43,18 @@ def write_imported_run(case: Case, *, variant: str, sim: str, turns: list[dict],
         side = t["side"]
         if side not in counts:
             raise ValueError(f"turn side must be 'person' or 'subject', not {side!r}")
-        k = counts[side] + (0 if side == "person" else 1)
+        if side == "subject":
+            k = counts[side] + 1
+        elif turns[0]["side"] == "subject":
+            k = counts["subject"]        # the subject spoke first: the person's turn replies to subject turn k
+        else:
+            k = counts[side]
         counts[side] += 1
         row = {"side": side, "n": k, "text": t["text"]}
         if t.get("tool_calls"):
             row["tool_calls"] = t["tool_calls"]
+        if t.get("prefilled"):
+            row["prefilled"] = True
         rows.append(row)
 
     seats = meta.get("seats") or {"subject": None, "sim": None}
@@ -57,7 +64,7 @@ def write_imported_run(case: Case, *, variant: str, sim: str, turns: list[dict],
              f"- Subject turns: {counts['subject']}"]
     for r in rows:
         who = "Person" if r["side"] == "person" else "Subject"
-        lines += ["", f"## {who} (turn {r['n']})", "", r["text"]]
+        lines += ["", f"## {who} (turn {r['n']}{', prefilled' if r.get('prefilled') else ''})", "", r["text"]]
         for tc in r.get("tool_calls", []):
             lines.append(f"\n- tool `{tc.get('name')}`: `{tc.get('arg')}`")
     write_text(path / "transcript.md", "\n".join(lines) + "\n")

@@ -1,0 +1,23 @@
+# A tiny live agent case: opencode (on DeepSeek) works in a copy of the scenario folder.
+# Needs the `opencode` program, and DEEPSEEK_API_KEY in the environment or in ~/.config/rehearse/keys
+# (see docs/BACKENDS.md). Not run by the tests.
+name = "opencode-case"
+
+[subject]
+adapter = "agent"
+seat = "opencode:deepseek/deepseek-chat"
+allowed_tools = ["Read", "Write(note.md)"]
+opening = "Please read tasks.md and write a short plan for my week into note.md."
+
+[scenario]
+folder = "scenario"
+
+[variants]
+baseline = ""
+
+[sims]
+seat = "deepseek:deepseek-chat"
+dir = "sims"
+
+[limits]
+max_turns = 3
