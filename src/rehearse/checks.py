@@ -210,6 +210,7 @@ def check_run(folder, case=None) -> dict:
     """
     from .runs import write_json            # runs.py imports this module, so import late
     from .simcheck import sim_check
+    from .workcheck import work_folder_check
 
     folder = Path(folder)
     run = Run.load(folder, case)
@@ -229,9 +230,11 @@ def check_run(folder, case=None) -> dict:
             c = run_check(fn, run.copy())
             results.append({"name": name, "description": desc, "result": c.result, "evidence": c.evidence})
     sim = sim_check(run.copy())
+    work = work_folder_check(run.copy())
+    reasons = [r for r in (sim["void_reason"], work["void_reason"]) if r]
     data = {"checked_at": _utc(), "rehearse_version": __version__, "checks_file": checks_file,
             "checks_sha256": checks_sha, "results": results, "sim_check": sim,
-            "void": sim["void"], "void_reason": sim["void_reason"]}
+            "work_folder_check": work, "void": sim["void"] or work["void"], "void_reason": "; ".join(reasons)}
     target = folder / "checks.json"
     if target.exists():
         (folder / "history").mkdir(exist_ok=True)

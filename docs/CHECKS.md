@@ -88,6 +88,17 @@ Every run also gets a sim check, with no setup. It looks for a simulated person 
 was an AI, or stated numbers it was never given. A **fail** voids the run: its other checks are saved but
 left out of the board. A **partial** does not void. See `checks.json` in the run folder for each item.
 
+## Work folder check
+
+Every agent run also gets a work folder check, with no setup (chat and imported runs get `skip`). It
+catches an agent working in the wrong folder, which leaves an empty folder diff and nothing else to show
+for it. The backends write the work folder as `./` in each tool call's argument, so it looks for: a file
+tool (read, write, edit, glob, grep, list, patch) given an absolute path, a `~` path or a `..` path
+(`paths_inside_work_folder`: **fail**; a shell command that mentions such a path is only a **partial**);
+and write or edit calls when the folder diff is empty (`wrote_something_when_tools_wrote`: **fail**, as the
+tool calls do not record whether a call worked). A **fail** voids the run, like the sim check. The result
+is `work_folder_check` in `checks.json`, and the board has a `work folder` column.
+
 ## Rubric and judge
 
 Some things cannot be checked in code, such as "did the review say what a good review says". For those a

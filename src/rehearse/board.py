@@ -45,6 +45,8 @@ class Record:
             return None
         if check == SIM_CHECK:
             return self.checks["sim_check"]["result"]
+        if check == WORK_CHECK:
+            return (self.checks.get("work_folder_check") or {}).get("result")
         for r in self.checks.get("results", []):
             if r["name"] == check:
                 return r["result"]
@@ -52,6 +54,7 @@ class Record:
 
 
 SIM_CHECK = "sim check"
+WORK_CHECK = "work folder"
 JUDGE_PREFIX = "judge "
 
 
@@ -80,7 +83,7 @@ EXCLUSIONS = (("error", "error"), ("unchecked", "unchecked"), ("skip", "skip"),
 N_MEANS = ("Each cell is `k of n`: k runs passed out of n runs that gave a result (pass, partial or fail). "
            "`+p partial` counts inside n. Runs left out of n are listed in the cell: `+e error` (the check "
            "crashed), `+u unchecked` (no checks.json, or no result for that check), `+s skip`, `+v void` "
-           "(failed the sim check), `+x error run` (the conversation ended in an error or was interrupted).")
+           "(failed the sim check or the work folder check), `+x error run` (the conversation ended in an error or was interrupted).")
 JUDGE_MEANS = ("In `judge N` columns, `+c unclear` is a question the judge could not decide (or whose quote "
                "was not found), and `+u unjudged` is a run with no judge.json.")
 
@@ -91,7 +94,7 @@ def tally(records: list[Record], check: str) -> dict:
     n counts runs that gave pass, partial or fail. Every other run is counted under why it is
     left out: error (the check crashed), unchecked (no checks.json, or the check is not in it),
     skip, void (failed the sim check), errorrun (the conversation ended in an error).
-    The sim check counts void runs, since its failure is the void.
+    The sim check and the work folder check count void runs, since their failure is the void.
     """
     t = {"k": 0, "n": 0, "partial": 0, "fail": 0,
          "error": 0, "unchecked": 0, "skip": 0, "void": 0, "errorrun": 0}
@@ -120,7 +123,7 @@ def tally(records: list[Record], check: str) -> dict:
         if r.checks is None:
             t["unchecked"] += 1
             continue
-        if r.void and check != SIM_CHECK:
+        if r.void and check not in (SIM_CHECK, WORK_CHECK):
             t["void"] += 1
             continue
         res = r.result(check)
@@ -257,7 +260,8 @@ def render(records: list[Record]) -> str:
         lines.append("- Stop reasons: " + ", ".join(f"{k} {v}" for k, v in sorted(stops.items())))
         errors = sum(r.errored for r in rs)
         lines.append(f"- Runs that ended in an error: {errors}")
-        lines.append(f"- Voided runs (failed the sim check{' or the judge' + chr(39) + 's sim part' if any(r.judge for r in rs) else ''}): {sum(r.void for r in rs)}")
+        has_work = any((r.checks or {}).get("work_folder_check", {}).get("result", "skip") != "skip" for r in rs)
+        lines.append(f"- Voided runs (failed the sim check{', the work folder check' if has_work else ''}{' or the judge' + chr(39) + 's sim part' if any(r.judge for r in rs) else ''}): {sum(r.void for r in rs)}")
         lines.append(f"- Runs with no checks.json: {sum(r.checks is None for r in rs)}")
         judge_names = _judge_names(rs)
         if judge_names:
@@ -270,7 +274,7 @@ def render(records: list[Record]) -> str:
                              if f"{JUDGE_PREFIX}{a['id']}" == name)
                     lines.append(f"  - {name}: {q}")
         main_judge = [n for n in judge_names if not is_continuation_id(n)]
-        names = _names(rs) + [SIM_CHECK] + main_judge
+        names = _names(rs) + [SIM_CHECK] + ([WORK_CHECK] if has_work else []) + main_judge
         lines += ["", "| variant | sim | " + " | ".join(names) + " |", "|---|---|" + "---|" * len(names)]
         cells = dict.fromkeys((r.variant, r.sim) for r in rs)
         for variant, sim in cells:
