@@ -23,7 +23,7 @@ from .http import LOCAL_HOSTS
 from .keys import read_key
 from .process import run as run_program
 
-_ARG_KEYS = ("filePath", "path", "file_path", "command", "pattern", "name")
+_ARG_KEYS = ("filePath", "path", "file_path", "command", "pattern", "name", "id")   # the skill tool uses "id"
 _SKILL_DIRS = (".claude/skills", ".agents/skills", ".opencode/skills")
 _EDIT_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 _SIMPLE = {"Read": "read", "Glob": "glob", "Grep": "grep", "Skill": "skill", "WebFetch": "webfetch",

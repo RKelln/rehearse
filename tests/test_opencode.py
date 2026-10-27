@@ -186,7 +186,8 @@ class SessionTests(OpencodeCase):
             ("write", {"path": f"{work}/note.md", "content": "hello"}),
             ("bash", {"command": "ls " + "x" * 300}),
             ("skill", {"name": "weekly-review"}),
-            ("glob", {"nothing": 1})])}])
+            ("glob", {"nothing": 1}),
+            ("skill", {"id": "weekly-review"})])}])     # the real opencode skill tool sends "id"
         r = s.send("go")
         self.assertEqual(r.text, "final answer")                     # not "thinking aloud" from before the tools
         self.assertEqual(r.tool_calls[0], {"name": "read", "arg": "./data.md"})
@@ -194,6 +195,7 @@ class SessionTests(OpencodeCase):
         self.assertEqual(len(r.tool_calls[2]["arg"]), 200)
         self.assertEqual(r.tool_calls[3], {"name": "skill", "arg": "weekly-review"})
         self.assertEqual(r.tool_calls[4], {"name": "glob", "arg": None})
+        self.assertEqual(r.tool_calls[5], {"name": "skill", "arg": "weekly-review"})
 
     def test_text_before_tools_is_used_when_nothing_follows(self):
         lines = [json.dumps({"type": "text", "sessionID": "S", "part": {"text": "only text"}}),
