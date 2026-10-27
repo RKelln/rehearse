@@ -136,9 +136,20 @@ repeat until a stop rule fires:
     subject replies
     sim replies
 stop rules: the sim says its stop word; the subject's reply matches the case's subject stop pattern
-            (an interviewer's closing debrief); the subject's artifact exists and the sim has
-            nothing left; the turn cap; a backend error (recorded, not retried silently)
+            (an interviewer's closing debrief); the artifact rule below; the turn cap;
+            a backend error (recorded, not retried silently)
 ```
+
+**The artifact rule** (`agent` subjects). A sim that never says its stop word after the subject has
+finished would run to the turn cap. The case can name the subject's deliverable in `[limits]`:
+`stop_after_artifact = "review.md"` (a path in the work folder) and `turns_after_artifact = 2`
+(the default). After each subject turn, once that file exists in the work folder: if the reply asks
+nothing (no "?" in it) the run stops with reason `artifact-done`; if it still asks something, the
+subject gets at most `turns_after_artifact` more turns, then the run stops with `artifact-done`. The
+sim's stop word works as before and wins if it comes first. The turn after which the file was first
+seen is recorded in `meta.json` as `artifact_seen_turn` (null if it never appeared). Without the
+setting nothing changes. The judge's `stopped_on_cue` field says whether the sim should have stopped
+earlier (reported, never voids a run).
 
 **Focused continuations.** Testing one step should not need a whole conversation:
 

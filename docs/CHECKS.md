@@ -138,7 +138,7 @@ stops the case from loading, with a plain message.
 the text of the files the subject wrote (each cut at 30 kB), the answer key only if the rubric asks, and
 the sim's mood and knowledge page. It never sees the variant text, so it cannot be nudged by what the
 variant says. It must reply with one JSON object: a verdict (`pass`, `partial`, `fail` or `unclear`) and
-one quote per question, plus a `sim` part (in character, kept up its mood, used only its knowledge).
+one quote per question, plus a `sim` part (in character, kept up its mood, used only its knowledge, stopped on cue).
 
 **Quote verification.** Every quote must appear in what the judge was shown (ignoring case, spacing and
 quote marks). A verdict whose quote is not found, or is empty, becomes `unclear` and is marked
@@ -147,6 +147,9 @@ asked once more; after that the error is recorded in `judge.json` and nothing el
 
 **Sim part.** If the judge says the sim was not in character, or used facts outside its knowledge page,
 and gives a quote that is found, the run is void: the board leaves it out of every column.
+`stopped_on_cue` (`pass`, `fail` or `n/a`) says whether the sim gave its stop word once the subject had
+clearly finished; it is reported in `judge.json` and never voids a run. For agent subjects,
+`stop_after_artifact` in `[limits]` ends such runs early (see the artifact rule in `DESIGN.md`).
 
 **Files.** `judge.json` goes in the run folder (the raw replies are `raw/judge-NN.json`, saved before
 parsing). A rerun moves the old file to `history/judge-<time>.json`. The board adds `judge N` columns:

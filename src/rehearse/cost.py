@@ -89,6 +89,7 @@ class Spend:
         self.calls = {s: 0 for s in SEATS}
         self.unknown = {s: 0 for s in SEATS}
         self.mock = {s: False for s in SEATS}
+        self.subscription = {s: True for s in SEATS}    # every call so far was on a subscription seat
         self.judge_usd = 0.0
         self.judge_calls = 0
         self.judge_unknown = 0
@@ -106,6 +107,8 @@ class Spend:
             self.usd[seat] += c.get("known_usd", c.get("usd") or 0.0)
             self.unknown[seat] += c.get("unknown_calls", 0)
             self.calls[seat] += c.get("calls", 0)
+            if c.get("calls", 0) and c.get("subscription_calls", 0) < c["calls"]:
+                self.subscription[seat] = False
             if (mock_seats or {}).get(seat):
                 self.mock[seat] = True
 
@@ -122,7 +125,7 @@ class Spend:
             elif not self.calls[seat]:
                 text = "not called"
             elif known <= 0:
-                text = "unknown"
+                text = "subscription (not metered)" if self.subscription[seat] else "unknown"
             elif self.unknown[seat]:
                 text = f"${self.usd[seat]:.4f} + unknown for {self.unknown[seat]} calls"
             else:

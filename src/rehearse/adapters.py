@@ -83,6 +83,10 @@ class AgentAdapter:
                                                      options={**(getattr(self.backend, "spec", None) or {}), **self.options})
         return self.session.send(message)
 
+    def artifact_exists(self, rel: str) -> bool:
+        """Is there a file at this path in the work copy right now?"""
+        return (self.workdir / rel).is_file()
+
     def close(self) -> None:
         if self.session is not None:
             self.session.close()

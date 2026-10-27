@@ -154,7 +154,11 @@ def _cost(calls: list[dict], seat: str) -> dict:
     unknown = sum(1 for r in mine if r.get("cost_usd") is None)
     total = None if unknown or not mine else sum(r["cost_usd"] for r in mine)
     known = sum(r["cost_usd"] for r in mine if r.get("cost_usd") is not None)
-    return {"usd": total, "calls": len(mine), "unknown_calls": unknown, "known_usd": known}
+    sub = sum(1 for r in mine if str((r.get("extras") or {}).get("cost_basis", "")).startswith("subscription"))
+    out = {"usd": total, "calls": len(mine), "unknown_calls": unknown, "known_usd": known}
+    if sub:
+        out["subscription_calls"] = sub
+    return out
 
 
 def _models(calls: list[dict], seat: str) -> list[str]:
@@ -303,6 +307,10 @@ def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, vari
         "started": out.started, "ended": out.ended,
         "rehearse_version": __version__, "case_commit": git_commit(case.root), "mock": mock,
     }
+    if case.stop_after_artifact:
+        meta.update({"stop_after_artifact": case.stop_after_artifact,
+                     "turns_after_artifact": case.turns_after_artifact,
+                     "artifact_seen_turn": out.artifact_seen_turn})
     if case.context_raw.strip():
         meta["context_sha256"] = _sha(case.context_raw)
     if case.max_prompt_chars:

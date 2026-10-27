@@ -88,6 +88,8 @@ class Case:
     context_path: Path | None = None         # chat subject: text appended to every variant's system prompt
     context_raw: str = ""
     max_prompt_chars: int | None = None      # refuse a variant longer than this
+    stop_after_artifact: str | None = None   # agent subject: a path in the work folder; see loop.py
+    turns_after_artifact: int = 2            # subject turns allowed after it appears, if the subject still asks things
 
     def frame_text(self) -> str:
         """The sim frame: the case's own file, else the one shipped with the tool."""
@@ -339,6 +341,16 @@ def load_case(path: str | Path) -> Case:
     max_turns = limits.get("max_turns", 12)
     if isinstance(max_turns, bool) or not isinstance(max_turns, int) or max_turns < 1:
         raise CaseError("[limits] max_turns must be a whole number, 1 or more")
+    stop_after = limits.get("stop_after_artifact")
+    if stop_after is not None:
+        if adapter != "agent":
+            raise CaseError("[limits] stop_after_artifact needs an agent subject")
+        if (not isinstance(stop_after, str) or not stop_after.strip() or Path(stop_after).is_absolute()
+                or ".." in Path(stop_after).parts):
+            raise CaseError("[limits] stop_after_artifact must be a path inside the work folder, such as \"review.md\"")
+    turns_after = limits.get("turns_after_artifact", 2)
+    if isinstance(turns_after, bool) or not isinstance(turns_after, int) or turns_after < 0:
+        raise CaseError("[limits] turns_after_artifact must be a whole number, 0 or more")
 
     checks_path = None
     checks_rel = _text(data, "checks", "case.toml")
@@ -401,7 +413,8 @@ def load_case(path: str | Path) -> Case:
                 judge_seat=judge_seat, judge_default=judge_default, checks_path=checks_path,
                 allowed_tools=allowed_tools, scenario_dir=scenario_dir, scenario_exclude=exclude,
                 subject_options=options, continuations=continuations, context_path=context_path,
-                context_raw=context_raw, max_prompt_chars=max_prompt_chars)
+                context_raw=context_raw, max_prompt_chars=max_prompt_chars,
+                stop_after_artifact=stop_after, turns_after_artifact=turns_after)
 
 
 def load_persona(path: Path, case_root: Path) -> Persona:

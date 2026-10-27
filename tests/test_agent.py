@@ -229,3 +229,52 @@ class ClaudeAgentEndToEndTests(CaseTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ArtifactStopTests(CaseTest):
+    def run_case(self, subject, sim=("Fine.", "Fine.", "Fine.", "Fine.", "DONE"), limits="", max_turns=6):
+        path = make_agent_case(self.root, subject_toml=subject, sim_replies=sim, max_turns=max_turns)
+        if limits:
+            path.write_text(path.read_text().replace("[limits]", "[limits]\n" + limits))
+        case = load_case(path)
+        res = execute_run(case, "baseline", "dana", MockBackend(case.mock_subject), MockBackend(case.mock_sim))
+        return res, json.loads((res.path / "meta.json").read_text())
+
+    W = '{ text = "Saved review.md.", write = { "review.md" = "# R\\n" } }'
+    LIMIT = 'stop_after_artifact = "review.md"'
+
+    def test_stops_after_question_free_reply(self):
+        res, meta = self.run_case(f'[{self.W}, "x?"]', limits=self.LIMIT)
+        self.assertEqual(res.stop, "artifact-done")
+        self.assertEqual(meta["artifact_seen_turn"], 1)
+        self.assertEqual(meta["turns"], {"subject": 1, "person": 0})
+
+    def test_questions_keep_it_going_up_to_the_limit(self):
+        w = '{ text = "Saved. Anything else?", write = { "review.md" = "# R\\n" } }'
+        res, meta = self.run_case(f'[{w}, "More?", "Still?", "Again?"]', limits=self.LIMIT)
+        self.assertEqual((res.stop, meta["turns"]["subject"], meta["artifact_seen_turn"]), ("artifact-done", 3, 1))
+        res, meta = self.run_case(f'[{w}, "More?", "Still?", "Again?"]', limits=self.LIMIT + "\nturns_after_artifact = 1")
+        self.assertEqual((res.stop, meta["turns"]["subject"]), ("artifact-done", 2))
+        res, meta = self.run_case(f'[{w}, "All done."]', limits=self.LIMIT)
+        self.assertEqual((res.stop, meta["turns"]["subject"]), ("artifact-done", 2))
+
+    def test_sim_stop_word_wins_if_first(self):
+        w = '{ text = "Saved. Anything else?", write = { "review.md" = "# R\\n" } }'
+        res, meta = self.run_case(f'[{w}, "More?", "Still?"]', sim=("DONE",), limits=self.LIMIT)
+        self.assertEqual((res.stop, meta["artifact_seen_turn"]), ("sim-stop", 1))
+
+    def test_no_setting_is_old_behaviour(self):
+        res, meta = self.run_case(f'[{self.W}, "More."]', sim=("Fine.", "DONE"))
+        self.assertEqual((res.stop, meta["turns"]["subject"]), ("sim-stop", 2))
+        self.assertNotIn("artifact_seen_turn", meta)
+
+    def test_never_appears(self):
+        res, meta = self.run_case('["a?", "b?"]', sim=("Fine.", "DONE"), limits=self.LIMIT)
+        self.assertEqual(res.stop, "sim-stop")
+        self.assertIsNone(meta["artifact_seen_turn"])
+
+    def test_bad_settings(self):
+        for bad in ('stop_after_artifact = "/etc/x"', 'stop_after_artifact = "../x"',
+                    self.LIMIT + "\nturns_after_artifact = -1"):
+            with self.assertRaises(CaseError, msg=bad):
+                self.run_case('["a"]', limits=bad)

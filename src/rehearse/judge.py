@@ -21,9 +21,10 @@ from .case import Case, CaseError
 from .checks import Run
 
 VERDICTS = ("pass", "partial", "fail", "unclear")
-SIM_KEYS = ("in_character", "kept_up_mood", "used_only_knowledge")
+SIM_KEYS = ("in_character", "kept_up_mood", "used_only_knowledge", "stopped_on_cue")
 SIM_VALUES = {"in_character": ("pass", "fail"), "kept_up_mood": ("pass", "partial", "fail"),
-              "used_only_knowledge": ("pass", "partial", "fail")}
+              "used_only_knowledge": ("pass", "partial", "fail"),
+              "stopped_on_cue": ("pass", "fail", "n/a")}      # reported, never voids a run
 FILE_LIMIT = 30_000
 RETRY = "Reply with only the JSON object."
 
@@ -152,7 +153,9 @@ def build_request(run: Run, rubric: dict, answer_key: str | None) -> tuple[str, 
     if rubric["answer_key"] and answer_key is not None:
         sections.append(("ANSWER KEY", answer_key.strip()))
     if persona or run.knowledge or not run.meta.get("continuation"):
-        sections.append(("PERSON", f"Mood: {mood or '(none given)'}\n\nKnowledge page:\n{run.knowledge or '(none)'}"))
+        ended = run.meta.get("stop_reason")
+        sections.append(("PERSON", f"Mood: {mood or '(none given)'}\n\nKnowledge page:\n{run.knowledge or '(none)'}"
+                         + (f"\n\nThe run ended because: {ended}" if ended else "")))
     else:
         sections.append(("PERSON", "(no simulated person: the person's turns were written in advance)"))
     user = "\n\n".join(f"===== {name} =====\n{body}" for name, body in sections)

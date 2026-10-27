@@ -81,6 +81,13 @@ class SpendLineTests(unittest.TestCase):
         self.assertEqual(s.line(), "spent: subject $0.2500, sim mock (no cost)")
         self.assertEqual(Spend().line(), "spent: subject not called, sim not called")
 
+    def test_subscription_seat(self):
+        s = Spend()
+        s.add({"subject": {**self.cost(3, 3, 0.0), "subscription_calls": 3}, "sim": self.cost(2, 2, 0.0)})
+        self.assertEqual(s.line(), "spent: subject subscription (not metered), sim unknown")
+        s.add({"subject": self.cost(1, 1, 0.0)})         # one call of another kind: back to unknown
+        self.assertEqual(s.line(), "spent: subject unknown, sim unknown")
+
 
 class SymlinkTests(CaseTest):
     def test_scenario_links_are_skipped_and_listed(self):

@@ -25,11 +25,15 @@ How to judge:
   - kept_up_mood: did it keep up the mood it was given? "pass", "partial" or "fail".
   - used_only_knowledge: did it stick to the facts on its knowledge page, with no invented facts that
     matter? "pass", "partial" or "fail".
+  - stopped_on_cue: did the person stop when it should have? "fail" when the subject clearly said it
+    was finished (for example, the file is saved and it asks nothing) and the person kept talking
+    instead of giving its stop word. "pass" when it stopped on cue. "n/a" when the run ended in some
+    other way (the PERSON section says why), or the subject never finished.
   - quote: one exact short quote from the person's turns that supports the weakest of these.
 
 Reply with ONLY one JSON object, with no text before or after it and no code fence, in exactly this shape:
 
 {"answers": [{"id": 1, "verdict": "pass", "quote": "..."}],
- "sim": {"in_character": "pass", "kept_up_mood": "pass", "used_only_knowledge": "pass", "quote": "..."}}
+ "sim": {"in_character": "pass", "kept_up_mood": "pass", "used_only_knowledge": "pass", "stopped_on_cue": "n/a", "quote": "..."}}
 
 Include one entry in "answers" for every question in the rubric, using its id exactly as written before the question (a number, or a label such as e1).

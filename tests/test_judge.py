@@ -93,6 +93,21 @@ class RubricTests(CaseTest):
             load_case(self.root)            # asks for the key, case has none
 
 
+class StoppedOnCueTests(JudgeBase):
+    def test_reported_and_never_voids(self):
+        data, b = self.judge(js({**GOOD, "sim": sim(stopped_on_cue="fail")}))
+        self.assertEqual(data["sim"]["stopped_on_cue"], "fail")
+        self.assertFalse(data["void"])
+        self.assertEqual(json.loads((self.run_dir / "judge.json").read_text())["sim"]["stopped_on_cue"], "fail")
+        self.assertIn("stopped_on_cue", b.calls[0][0])
+        self.assertIn("The run ended because: sim-stop", b.calls[0][1][0].content)
+
+    def test_values(self):
+        self.assertEqual(self.judge(js({**GOOD, "sim": sim(stopped_on_cue="n/a")}))[0]["sim"]["stopped_on_cue"], "n/a")
+        self.assertEqual(self.judge(js(GOOD))[0]["sim"]["stopped_on_cue"], "unclear")       # not given
+        self.assertEqual(self.judge(js({**GOOD, "sim": sim(stopped_on_cue="maybe")}))[0]["sim"]["stopped_on_cue"], "unclear")
+
+
 class JudgeTests(JudgeBase):
     def test_request_has_transcript_not_key_or_variant(self):
         data, b = self.judge(js(GOOD))

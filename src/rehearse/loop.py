@@ -2,6 +2,9 @@
 
 Stop rules, in the order they are checked after each subject reply:
   subject-stop  the subject's reply matches the case's stop_pattern
+  artifact-done the case's `stop_after_artifact` file exists in the work folder and either the
+                subject's reply asks nothing (no "?"), or `turns_after_artifact` more subject turns
+                have been given since it was first seen
   turn-cap      the subject has replied max_turns times (new replies only, after a prefill)
   continuation-done  a focused continuation without a sim: the subject has given its one reply
 then after each sim reply:
@@ -46,6 +49,7 @@ class Outcome:
     stop: str = ""
     stop_with_text: bool = False                       # the sim stopped but said more than the stop word
     interrupted: bool = False
+    artifact_seen_turn: int | None = None              # the subject turn after which the artifact was first seen
     started: str = ""
     ended: str = ""
     quota: QuotaError | None = None                    # set when a QuotaError ended the run
@@ -178,6 +182,13 @@ def run_conversation(case: Case, adapter: ChatAdapter, sim: Backend | None, pers
             if case.stop_pattern and case.stop_pattern.search(res.text):
                 out.stop = "subject-stop"
                 break
+            if case.stop_after_artifact and hasattr(adapter, "artifact_exists"):
+                if out.artifact_seen_turn is None and adapter.artifact_exists(case.stop_after_artifact):
+                    out.artifact_seen_turn = n
+                if out.artifact_seen_turn is not None and (
+                        "?" not in res.text or n - out.artifact_seen_turn >= case.turns_after_artifact):
+                    out.stop = "artifact-done"
+                    break
             if out.generated("subject") >= cap:
                 out.stop = "turn-cap"
                 break
