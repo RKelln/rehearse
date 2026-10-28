@@ -117,3 +117,46 @@ class ExampleCaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InitAndBackgroundTests(CaseTest):
+    def test_init_writes_a_case_that_loads_and_runs(self):
+        for adapter in ("chat", "agent"):
+            folder = self.root / adapter
+            code, out, _ = run_main(["init", str(folder), "--adapter", adapter])
+            self.assertEqual(code, 0)
+            self.assertIn("docs/NEW-CASE.md", out)
+            self.assertEqual(load_case(folder).adapter, adapter)
+            code, out, _ = run_main(["suite", str(folder), "--yes"])
+            self.assertEqual(code, 0, out)
+            self.assertTrue(list((folder / "runs").glob("*/meta.json")))
+
+    def test_init_takes_a_prompt_and_refuses_to_overwrite(self):
+        prompt = self.root / "p.txt"
+        prompt.write_text("PROMPT-TEXT")
+        folder = self.root / "c"
+        run_main(["init", str(folder), "--prompt", str(prompt)])
+        self.assertEqual((folder / "variants" / "current.md").read_text(), "PROMPT-TEXT")
+        code, _, err = run_main(["init", str(folder)])
+        self.assertEqual(code, 2)
+        self.assertIn("already exists", err)
+
+    def test_background_runs_detached_and_status_reports_it(self):
+        import time
+        folder = self.root / "bg"
+        run_main(["init", str(folder)])
+        code, out, _ = run_main(["suite", str(folder), "--background"])
+        self.assertEqual(code, 0)
+        self.assertIn("started in the background", out)
+        for _ in range(100):
+            _, status, _ = run_main(["status", str(folder)])
+            if "done" in status or "ended" in status:
+                break
+            time.sleep(0.2)
+        self.assertIn("done", status)
+        self.assertTrue(list((folder / "runs").glob("*/meta.json")))
+
+    def test_status_with_no_jobs(self):
+        folder = self.root / "n"
+        run_main(["init", str(folder)])
+        self.assertIn("no background runs", run_main(["status", str(folder)])[1])

@@ -1,7 +1,9 @@
 # AGENTS.md
 
 Rehearse tests an AI that talks with people by having another model play the person. The design is
-in [`docs/DESIGN.md`](docs/DESIGN.md). Read it before changing anything.
+in [`docs/DESIGN.md`](docs/DESIGN.md). Read it before changing anything. To make a new case, see [`docs/NEW-CASE.md`](docs/NEW-CASE.md)
+(or the `new-rehearsal` skill in `.claude/skills`). `rehearse init` scaffolds one; `--background` plus
+`rehearse status` runs a live suite detached.
 
 Status: steps 1 to 3, 5, 6a, 6b and 6c built (core loop, checks, sim check, board, compare, claude, opencode, codex and http backends, agent adapter, cost, rubric and judge, focused continuations for chat subjects). See `docs/PLAN.md`.
 

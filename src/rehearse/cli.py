@@ -13,7 +13,9 @@ from pathlib import Path
 from . import board as board_mod
 from . import compare as compare_mod
 from .backends import BackendError, QuotaError, is_mock_spec, make_backend
+from . import background
 from .case import Case, CaseError, load_case
+from .scaffold import init_case
 from .checks import check_run, find_case_file
 from .judge import judge_run, rubric_for_run
 from .cost import Spend, estimate_line, is_live, seat_is_mock
@@ -245,6 +247,8 @@ def _live_flags(parser, keep_work: bool = True) -> None:
         parser.add_argument("--keep-work", action="store_true", help="keep an agent's work folder after the run")
     parser.add_argument("--judge", action="store_true", help="judge each run right after its checks")
     parser.add_argument("--no-judge", action="store_true", help="do not judge (when the case judges by default)")
+    parser.add_argument("--background", action="store_true",
+                        help="check the case, then run detached with --yes (ask the owner first); see `rehearse status`")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -263,6 +267,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--repeats", type=int, default=1)
     s.add_argument("--dry-run", action="store_true", help="list the runs and the cost estimate; run nothing")
     _live_flags(s)
+    i = sub.add_parser("init", help="write a small working case (on mock seats) to fill in")
+    i.add_argument("folder")
+    i.add_argument("--name")
+    i.add_argument("--adapter", choices=["chat", "agent"], default="chat")
+    i.add_argument("--prompt", help="a file holding the prompt under test")
+    i.add_argument("--subject-seat", default="mock")
+    i.add_argument("--sim-seat", default="mock")
+    i.add_argument("--judge-seat", default="mock")
+    st = sub.add_parser("status", help="background runs started with --background, and their logs")
+    st.add_argument("case")
     k = sub.add_parser("continue", help="run the case's focused continuations (prefilled transcripts)")
     k.add_argument("case")
     k.add_argument("--only", help="comma-separated continuation ids; default all")
@@ -289,6 +303,26 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--pair", action="append", default=[], metavar="OLD=NEW",
                    help="compare the before variant OLD with the after variant NEW (repeatable)")
     args = parser.parse_args(argv)
+    if args.command == "init":
+        try:
+            files = init_case(args.folder, args.name, args.adapter, args.prompt,
+                              args.subject_seat, args.sim_seat, args.judge_seat)
+        except CaseError as e:
+            _say(f"error: {e}", err=True)
+            return 2
+        for f in files:
+            _say(f"wrote {display_path(f)}")
+        _say(f"next: edit the sim, knowledge and rubric, then `rehearse suite {args.folder} --dry-run` "
+             "(see docs/NEW-CASE.md)")
+        return 0
+    if args.command == "status":
+        try:
+            lines = background.status(load_case(args.case).runs_dir)
+        except CaseError as e:
+            _say(f"error: {e}", err=True)
+            return 2
+        _say("\n".join(lines) or "no background runs")
+        return 0
     if args.command in ("check", "board", "compare"):
         return _saved_runs_command(args)
     if args.command == "judge":
@@ -307,6 +341,12 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "max_usd", None) is not None and not (math.isfinite(args.max_usd) and args.max_usd > 0):
             raise CaseError("--max-usd must be a number more than 0")
         case = load_case(args.case)
+        if getattr(args, "background", False):
+            raw = list(sys.argv[1:] if argv is None else argv)
+            rest = [a for a in raw if a not in ("--background", "--yes")] + ["--yes"]
+            log = background.start(rest, case.runs_dir)
+            _say(f"started in the background; follow it with `rehearse status {args.case}`\nlog: {display_path(log)}")
+            return 0
         cells = None
         if args.command == "continue":
             if not case.continuations:
