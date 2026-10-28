@@ -15,7 +15,7 @@ from . import compare as compare_mod
 from .backends import BackendError, QuotaError, is_mock_spec, make_backend
 from . import background
 from .case import Case, CaseError, load_case
-from .scaffold import init_case
+from .scaffold import extract_continuation, init_case
 from .checks import check_run, find_case_file
 from .judge import judge_run, rubric_for_run
 from .cost import Spend, estimate_line, is_live, seat_is_mock
@@ -275,6 +275,14 @@ def main(argv: list[str] | None = None) -> int:
     i.add_argument("--subject-seat", default="mock")
     i.add_argument("--sim-seat", default="mock")
     i.add_argument("--judge-seat", default="mock")
+    x = sub.add_parser("extract", help="write a focused continuation from a saved run, cut just before a subject turn")
+    x.add_argument("run", help="a run folder")
+    x.add_argument("--at", type=int, required=True, metavar="N", help="the subject turn to test: the turns before it are prefilled")
+    x.add_argument("--id", required=True, help="the continuation's name (its file stem)")
+    x.add_argument("--purpose", required=True)
+    x.add_argument("--expect", action="append", default=[], metavar="LINE", help="what a good reply does (repeatable)")
+    x.add_argument("--to", help="folder to write into (default: continuations/ beside the case.toml above the run)")
+    x.add_argument("--variant", help="limit the continuation to one variant")
     st = sub.add_parser("status", help="background runs started with --background, and their logs")
     st.add_argument("case")
     k = sub.add_parser("continue", help="run the case's focused continuations (prefilled transcripts)")
@@ -314,6 +322,15 @@ def main(argv: list[str] | None = None) -> int:
             _say(f"wrote {display_path(f)}")
         _say(f"next: edit the sim, knowledge and rubric, then `rehearse suite {args.folder} --dry-run` "
              "(see docs/NEW-CASE.md)")
+        return 0
+    if args.command == "extract":
+        try:
+            path = extract_continuation(args.run, args.at, args.id, args.purpose, args.expect, args.to, args.variant)
+        except CaseError as e:
+            _say(f"error: {e}", err=True)
+            return 2
+        _say(f"wrote {display_path(path)}\nnext: `rehearse continue CASE --only {args.id} --dry-run` "
+             "(needs a chat subject; see docs/CHECKS.md, Focused continuations)")
         return 0
     if args.command == "status":
         try:

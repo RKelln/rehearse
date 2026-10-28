@@ -393,7 +393,8 @@ def load_case(path: str | Path) -> Case:
         if not cont_dir.is_dir():
             raise CaseError(f"continuations folder not found: {cont_rel}")
         if adapter != "chat":
-            raise CaseError("continuations need a chat subject")
+            raise CaseError("continuations need a chat subject; for an agent case, make a second case file with a chat "
+                            "subject (see docs/NEW-CASE.md, Testing one step)")
         for p in sorted(cont_dir.glob("*.md")):
             cont = parse_continuation(p.read_bytes().decode(), p.stem, p)
             if cont.variant and cont.variant not in variants:

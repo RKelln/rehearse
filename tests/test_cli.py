@@ -173,3 +173,24 @@ class BoardPendingTests(CaseTest):
             a.write_text("# Done\n\n1 of 1 held.\n")
         _, out, _ = run_main(["board", str(folder / "runs")])
         self.assertNotIn("Not yet assessed", out)
+
+
+class ExtractTests(CaseTest):
+    def test_extract_cuts_before_the_subject_turn_and_the_file_loads(self):
+        folder = self.root / "x"
+        run_main(["init", str(folder)])
+        run_main(["suite", str(folder), "--yes"])
+        run = next((folder / "runs").glob("*/meta.json")).parent
+        code, out, _ = run_main(["extract", str(run), "--at", "2", "--id", "step2", "--purpose", "one step",
+                                 "--expect", "asks one question"])
+        self.assertEqual(code, 0, out)
+        text = (folder / "continuations" / "step2.md").read_text()
+        self.assertIn("## Subject", text)
+        self.assertTrue(text.rstrip().rsplit("## ", 1)[1].startswith("Person"))     # ends on a person turn
+        from rehearse.case import parse_continuation
+        c = parse_continuation(text, "step2", folder / "continuations" / "step2.md")
+        self.assertEqual(c.turns[-1][0], "person")
+        self.assertEqual(run_main(["extract", str(run), "--at", "2", "--id", "step2", "--purpose", "p",
+                                   "--expect", "e"])[0], 2)                           # no overwrite
+        self.assertEqual(run_main(["extract", str(run), "--at", "99", "--id", "z", "--purpose", "p",
+                                   "--expect", "e"])[0], 2)                           # no such turn

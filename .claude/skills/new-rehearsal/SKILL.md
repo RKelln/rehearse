@@ -23,6 +23,8 @@ Follow `docs/NEW-CASE.md`; this is the checklist.
    start a second copy of a run that is going.
 8. Read every transcript. Report the counts as "k of n" with the models in each seat, what the run did not
    test, and any problem with the sim or the setup. Never call one run a result.
+8b. To check one weak turn after a prompt change, use `rehearse extract RUN --at N ...` and
+   `rehearse continue` (chat subjects only; see docs/NEW-CASE.md, Testing one step).
 9. Write each run's `assessment.md` yourself (rehearse only leaves a `NOT YET ASSESSED` stub; the board lists
    the runs still unassessed). Do not leave a stub in a committed run.
 10. Commit only the case folder, by path. Scrub email addresses and home paths first.

@@ -76,6 +76,27 @@ the stub with what you saw: the counts as k of n, the model in each seat, what t
 with the sim or the setup (a sim that did not do its job voids the run), and any check that raised a false
 alarm. Only then commit it.
 
+## Testing one step (focused continuations)
+
+To check one weak turn after a prompt change, do not rerun whole conversations. Cut the conversation
+where it went wrong and see what a new prompt says next:
+
+```
+uv run rehearse extract RUN --at 3 --id compound_question --purpose "earlier, a two-part question" \
+    --expect "asks exactly one question" --expect "does not state the answer"
+uv run rehearse continue CASE --repeats 3 --judge --dry-run
+```
+
+`extract` writes `continuations/ID.md` from a saved run: every turn before subject turn 3, ending on the
+person's turn, so the subject's reply is the step under test. The prefilled subject turns are not the
+tested model's own words, so a reply is evidence about one step, not a whole conversation.
+
+**Continuations need a chat subject.** An agent subject (codex, opencode) cannot run them yet. To test one
+step of an agent case, make a second case file for the same prompt with a chat subject, such as
+`case-chat.toml` with its own `runs_dir`, and run `continue` on that. Say in its comments that the model
+differs from the agent case. Compare two prompt versions (`current` against `one-question`) on the *same*
+model, and run each continuation several times: one reply is an anecdote.
+
 ## Common mistakes
 
 - A `codex` or `opencode` seat in `[sims]` or `[judge]`: they are agent-only.

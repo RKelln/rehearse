@@ -106,3 +106,51 @@ def init_case(folder: str | Path, name: str | None = None, adapter: str = "chat"
         path.write_text(text)
         written.append(path)
     return written
+
+
+def extract_continuation(run: str | Path, at: int, cont_id: str, purpose: str, expect: list[str],
+                         to: str | Path | None = None, variant: str | None = None) -> Path:
+    """Write a continuation from a saved run: every turn before subject turn `at`, then stop.
+
+    The subject's reply to the last prefilled person turn is the step under test. `to` is the folder to write
+    into (default: `continuations` next to the case.toml above the run). Refuses to overwrite a file.
+    """
+    import json
+    from .case import parse_continuation
+    from .checks import find_case_file
+    from .runs import scrub
+    run = Path(run)
+    try:
+        rows = [json.loads(ln) for ln in (run / "turns.jsonl").read_text().splitlines() if ln.strip()]
+    except OSError:
+        raise CaseError(f"{run} is not a run folder (no turns.jsonl)") from None
+    if not any(r["side"] == "subject" and r["n"] == at for r in rows):
+        have = sorted(r["n"] for r in rows if r["side"] == "subject")
+        raise CaseError(f"that run has no subject turn {at}; its subject turns are {have[0]} to {have[-1]}")
+    if not expect:
+        raise CaseError("give at least one --expect line: what a good reply does")
+    keep, seen = [], False
+    for r in rows:
+        if r["side"] == "subject" and r["n"] == at:
+            break
+        keep.append(r)
+    if not keep or keep[-1]["side"] != "person":
+        raise CaseError("the turns before that point must end with a person turn")
+    if to is None:
+        case_file = find_case_file(run)
+        if case_file is None:
+            raise CaseError("no case.toml above the run; pass --to FOLDER")
+        to = case_file.parent / "continuations"
+    path = Path(to) / f"{cont_id}.md"
+    if path.exists():
+        raise CaseError(f"{path} already exists; pick another --id")
+    head = ["---", "purpose: " + json.dumps(purpose), "expect:"] + ["  - " + json.dumps(e) for e in expect]
+    if variant:
+        head.append(f"variant: {variant}")
+    head.append("---")
+    body = "\n\n".join(f"## {'Person' if r['side'] == 'person' else 'Subject'}\n\n{r['text'].strip()}" for r in keep)
+    text = scrub("\n".join(head) + "\n" + body + "\n")
+    parse_continuation(text, cont_id, path)          # fail now if the file would not load
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
