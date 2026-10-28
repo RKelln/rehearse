@@ -7,7 +7,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .runs import display_path, find_runs, scrub
+from .runs import assessment_pending, display_path, find_runs, scrub
 
 FOOTER = ("Counts are runs, never percentages. One run is an anecdote. Read the transcripts.")
 
@@ -298,6 +298,11 @@ def render(records: list[Record]) -> str:
         reasons = [(r, _why_read(r)) for r in rs]
         lines += [f"- {display_path(r.path)}: {'; '.join(w)}" for r, w in reasons if w] or ["- none"]
         lines.append("")
+    pending = [r for r in records if assessment_pending(r.path)]
+    if pending:
+        names = ", ".join(display_path(r.path) for r in pending)
+        lines += [f"Not yet assessed: {len(pending)} of {len(records)} runs have no written assessment.md "
+                  f"(read the transcript, then write it): {names}", ""]
     lines += [FOOTER, ""]
     return "\n".join(lines)
 

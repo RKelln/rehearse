@@ -68,8 +68,13 @@ said yes). The log is `runs/.jobs/STAMP.log`; the exit code lands in `STAMP.exit
 uv run rehearse board CASE/runs      # k of n per check
 ```
 
-then **read the transcripts** (`runs/*/transcript.md`): the board only says where to look. Write what you
-saw, with the denominators and the models in each seat, in the run's `assessment.md`.
+then **read the transcripts** (`runs/*/transcript.md`): the board only says where to look.
+
+**Writing `assessment.md` is the job of whoever ran the suite** (the agent or the person). Rehearse only
+creates a stub that says `NOT YET ASSESSED`, and `rehearse board` lists every run still in that state. Replace
+the stub with what you saw: the counts as k of n, the model in each seat, what the run did not test, any problem
+with the sim or the setup (a sim that did not do its job voids the run), and any check that raised a false
+alarm. Only then commit it.
 
 ## Common mistakes
 

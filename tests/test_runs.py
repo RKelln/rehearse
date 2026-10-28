@@ -106,7 +106,14 @@ class SavedRunTests(CaseTest):
 
     def test_assessment_stub(self):
         text = (self.path / "assessment.md").read_text()
-        self.assertIn("Read transcript.md.", text)
+        self.assertIn("Read transcript.md", text)
+        self.assertIn("NOT YET ASSESSED", text)
+        from rehearse.runs import assessment_pending
+        self.assertTrue(assessment_pending(self.path))
+        (self.path / "assessment.md").write_text("# Mine\n\n2 of 2 held.\n")
+        self.assertFalse(assessment_pending(self.path))
+        (self.path / "assessment.md").write_text("# A\n\nRead transcript.md.\n\n## What worked\n\n## What failed\n\n## Notes\n")
+        self.assertTrue(assessment_pending(self.path))      # the old empty stub
         for h in ("## What worked", "## What failed", "## Notes"):
             self.assertIn(h, text)
 

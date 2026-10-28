@@ -63,6 +63,19 @@ def scrub_obj(obj):
     return obj
 
 
+STUB_MARKER = "NOT YET ASSESSED"
+_OLD_STUB_TAIL = "Read transcript.md.\n\n## What worked\n\n## What failed\n\n## Notes\n"
+
+
+def assessment_pending(folder: Path) -> bool:
+    """True when a run has no assessment yet: the file is missing, still says NOT YET ASSESSED, or is the old empty stub."""
+    try:
+        text = (Path(folder) / "assessment.md").read_text()
+    except OSError:
+        return True
+    return STUB_MARKER in text or text.endswith(_OLD_STUB_TAIL)
+
+
 def write_text(path: Path, text: str) -> str:
     """Write scrubbed text and return what was written."""
     clean = scrub(text)
@@ -324,8 +337,9 @@ def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, vari
                      "sim_used": persona is not None, "persona": persona.sim if persona else None})
     write_json(path / "meta.json", meta)
     write_text(path / "assessment.md",
-               f"# Assessment: {case.name}, {variant} with {sim}\n\nRead transcript.md.\n\n"
-               "## What worked\n\n## What failed\n\n## Notes\n")
+               f"# Assessment: {case.name}, {variant} with {sim}\n\n{STUB_MARKER}. Read transcript.md, then replace this "
+               "line with what you saw: the counts as k of n, the model in each seat, what the run did not "
+               "test, and any problem with the sim or the setup.\n\n## What worked\n\n## What failed\n\n## Notes\n")
     from .checks import check_run     # imported here: checks.py uses this module's writers
     check_run(path, case)
     if out.quota:

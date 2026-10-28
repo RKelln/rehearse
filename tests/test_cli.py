@@ -160,3 +160,16 @@ class InitAndBackgroundTests(CaseTest):
         folder = self.root / "n"
         run_main(["init", str(folder)])
         self.assertIn("no background runs", run_main(["status", str(folder)])[1])
+
+
+class BoardPendingTests(CaseTest):
+    def test_board_flags_runs_without_an_assessment(self):
+        folder = self.root / "b"
+        run_main(["init", str(folder)])
+        run_main(["suite", str(folder), "--yes"])
+        _, out, _ = run_main(["board", str(folder / "runs")])
+        self.assertIn("Not yet assessed: 1 of 1", out)
+        for a in (folder / "runs").glob("*/assessment.md"):
+            a.write_text("# Done\n\n1 of 1 held.\n")
+        _, out, _ = run_main(["board", str(folder / "runs")])
+        self.assertNotIn("Not yet assessed", out)
