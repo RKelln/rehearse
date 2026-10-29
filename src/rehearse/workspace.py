@@ -155,7 +155,9 @@ class Workspace:
         return ws
 
     def _copy(self, source: Path, exclude: list[str], record: dict) -> None:
-        """Copy regular files from `source`. Links are skipped (and listed), never followed."""
+        """Copy regular files from `source`. Links are never followed: a relative link that stays inside
+        `source` is recreated as the same link (a skill folder linked under a second name, say); any
+        other link is skipped and listed."""
         used: set[int] = set()
         for folder, dirs, files in os.walk(source, followlinks=False):
             base = Path(folder)
@@ -171,8 +173,16 @@ class Workspace:
                 if hit:
                     continue
                 if src.is_symlink():
+                    target = os.readlink(src)
+                    if not os.path.isabs(target) and _inside(src, source):
+                        dest = self.path / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        os.symlink(target, dest)
+                        record[rel] = "symlink:" + target
+                        continue
                     self.skipped_symlinks.append(rel)
-                    self.warnings.append(f"skipped a symbolic link in the scenario: {rel}")
+                    self.warnings.append(f"skipped a symbolic link that is absolute or leads outside "
+                                         f"{source.name}: {rel}")
                     continue
                 if not _inside(src, source):
                     raise CaseError(f"{rel} resolves to a place outside {source.name}; refusing to copy it")

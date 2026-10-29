@@ -105,7 +105,7 @@ class SymlinkTests(CaseTest):
         scenario = json.loads((res.path / "inputs" / "scenario.json").read_text())
         self.assertEqual(scenario["skipped_symlinks"], ["link.txt", "linkdir"])
         self.assertEqual(sorted(scenario["files"]), ["notes.md"])
-        self.assertIn("skipped a symbolic link in the scenario: link.txt", buf.getvalue())
+        self.assertIn("skipped a symbolic link that is absolute or leads outside scenario: link.txt", buf.getvalue())
         for p in res.path.rglob("*"):
             if p.is_file():
                 self.assertNotIn("OUTSIDE", p.read_text())
@@ -502,3 +502,27 @@ class ArtifactTests(CaseTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RelativeInsideLinkTests(unittest.TestCase):
+    def test_relative_link_inside_the_scenario_is_kept_as_a_link(self):
+        import tempfile
+        from rehearse.workspace import Workspace
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "scenario"
+            (src / ".agents" / "skills" / "s").mkdir(parents=True)
+            (src / ".agents" / "skills" / "s" / "SKILL.md").write_text("skill")
+            (src / ".claude").mkdir()
+            (src / ".claude" / "skills").symlink_to("../.agents/skills")
+            (src / "up").symlink_to("../elsewhere")            # relative but leads outside: skipped
+            out = Path(tmp) / "out"
+            out.mkdir()
+            ws = Workspace(out)
+            record = {}
+            ws._copy(src, [], record=record)
+            link = out / ".claude" / "skills"
+            self.assertTrue(link.is_symlink())
+            self.assertEqual(os.readlink(link), "../.agents/skills")
+            self.assertEqual((link / "s" / "SKILL.md").read_text(), "skill")
+            self.assertEqual(record[".claude/skills"], "symlink:../.agents/skills")
+            self.assertEqual(ws.skipped_symlinks, ["up"])
