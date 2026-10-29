@@ -286,6 +286,9 @@ def _save(case, variant, sim, repeat, today, subject, sim_backend, persona, vari
         sources["variant.md"] = variant_text
     elif work:
         for rel in sorted(work.overlay):
+            if work.overlay[rel].startswith("symlink:"):      # a link kept by the work copy: record where it points
+                sources[f"variant/{rel}"] = work.overlay[rel] + "\n"
+                continue
             sources[f"variant/{rel}"] = (case.variants[variant] / rel).read_bytes().decode("utf-8", "replace")
     if persona and persona.knowledge_path:
         sources["knowledge.md"] = persona.knowledge_raw

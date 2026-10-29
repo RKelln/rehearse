@@ -526,3 +526,21 @@ class RelativeInsideLinkTests(unittest.TestCase):
             self.assertEqual((link / "s" / "SKILL.md").read_text(), "skill")
             self.assertEqual(record[".claude/skills"], "symlink:../.agents/skills")
             self.assertEqual(ws.skipped_symlinks, ["up"])
+
+
+class LinkedVariantRunTests(CaseTest):
+    def test_a_run_with_a_linked_skill_folder_in_the_variant_saves(self):
+        import contextlib, io
+        from rehearse.backends import MockBackend
+        from rehearse.case import load_case
+        from rehearse.runs import execute_run
+        path = make_agent_case(self.root, overlays={"linked": {".agents/skills/s/SKILL.md": "skill\n"}})
+        (self.root / "variants" / "linked" / ".claude").mkdir()
+        (self.root / "variants" / "linked" / ".claude" / "skills").symlink_to("../.agents/skills")
+        case = load_case(path)
+        with contextlib.redirect_stdout(io.StringIO()):
+            res = execute_run(case, "linked", "dana", MockBackend(["Hi"]), MockBackend(["DONE"]))
+        saved = res.path
+        self.assertEqual((saved / "inputs" / "variant" / ".claude" / "skills").read_text(),
+                         "symlink:../.agents/skills\n")
+        self.assertTrue((saved / "meta.json").exists())
