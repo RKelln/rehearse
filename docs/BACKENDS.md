@@ -286,8 +286,9 @@ Exclude patterns work like `.gitignore`: a pattern with no `/` matches that name
 `dir/` and `dir/**` match everything under `dir`. A pattern that matches nothing is reported (printed,
 and listed in `inputs/scenario.json`) because it is usually a typo.
 
-Symbolic links are never copied or followed: links in the scenario are skipped, listed under
-`skipped_symlinks`, and warned about; a link the agent makes is recorded in `diff.json` as
+Symbolic links are never followed. A relative link that stays inside the scenario or variant folder is
+recreated as the same link (for a skill folder linked under a second name); any other link is skipped,
+listed under `skipped_symlinks`, and warned about; a link the agent makes is recorded in `diff.json` as
 `{"path": ..., "symlink_to": ...}` and its target is never read. The run refuses to start if the system's
 temporary folder is inside the case or scenario folder.
 
