@@ -12,7 +12,7 @@ In `case.toml`, a seat is a short string, `backend[:model]`:
 | `mock` | scripted replies, for testing the tool. Costs nothing. Runs are marked "plumbing only". |
 | `claude:sonnet` | the `claude` command line program, with that model (the model is optional) |
 | `opencode:PROVIDER/MODEL` | the `opencode` command line program (agent seats only), such as `opencode:deepseek/deepseek-chat` |
-| `codex[:MODEL]` | the `codex` command line program (agent seats only), such as `codex:gpt-5` |
+| `codex[:MODEL]` | the `codex` command line program (agent seats; chat seats through an agent wrapper), such as `codex:gpt-5` |
 | `http:MODEL@BASE_URL` | any OpenAI-compatible endpoint, such as `http:llama3@http://localhost:11434/v1` |
 | `openai:MODEL` | `https://api.openai.com/v1`, key `OPENAI_API_KEY` |
 | `openrouter:MODEL` | `https://openrouter.ai/api/v1`, key `OPENROUTER_API_KEY`, 18 requests a minute |
@@ -58,7 +58,7 @@ A backend says what it supports, and the adapters check it before a run starts:
 | `mock` | yes | yes | yes | yes |
 | `claude` | yes | yes | yes | yes |
 | `opencode` | no | yes | yes | yes |
-| `codex` | no | yes | yes | yes |
+| `codex` | yes (wrapped) | yes | yes | yes |
 | `http` | yes | no | no | no |
 
 - A **chat** seat takes a system prompt and the whole conversation each turn and returns the reply.
@@ -204,8 +204,11 @@ Unknown event types are ignored.
 
 ## The codex backend
 
-The program is `codex`, or whatever `REHEARSE_CODEX_BIN` names. It is an agent backend: it can run an
-agent subject but not a chat seat or the sim. Tested against codex-cli 0.163.0 with a ChatGPT login.
+The program is `codex`, or whatever `REHEARSE_CODEX_BIN` names. It is an agent backend. It can also fill
+a chat seat (a sim or the judge): each call is a fresh `codex exec` thread in an empty, read-only temporary
+folder, with the system prompt and the conversation so far on stdin. codex has no plain chat mode, so its own
+agent instructions still wrap the prompt; say so when comparing a codex sim or judge with a true chat seat.
+Tested against codex-cli 0.163.0 with a ChatGPT login.
 
 **Seat.** `codex` or `codex:MODEL`. Without a model, codex uses its own default. As a table:
 

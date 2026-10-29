@@ -22,8 +22,8 @@ import tempfile
 import weakref
 from pathlib import Path
 
-from .base import AgentSession, Backend, BackendError, QuotaError, SeatResult, SetupError
-from .claude import _QUOTA, _tail, base_tool_names
+from .base import AgentSession, Backend, BackendError, Msg, QuotaError, SeatResult, SetupError
+from .claude import _QUOTA, _tail, base_tool_names, flatten
 from .keys import read_key
 from .process import run as run_program
 
@@ -55,7 +55,7 @@ def _login_file() -> Path:
 
 
 class CodexBackend(Backend):
-    capabilities = frozenset({"agent", "resume", "fork"})
+    capabilities = frozenset({"chat", "agent", "resume", "fork"})
 
     def __init__(self, spec: dict):
         self.spec = spec
@@ -90,6 +90,24 @@ class CodexBackend(Backend):
 
     def open_session(self, workdir, *, allowed_tools=None, options=None) -> "CodexSession":
         return CodexSession(self, Path(workdir), allowed_tools, {**self.spec, **(options or {})})
+
+    def chat(self, system: str, messages: list[Msg]) -> SeatResult:
+        """A chat seat (a sim or the judge): one fresh codex thread per call, in an empty read-only folder.
+
+        codex has no plain chat mode, so its own agent instructions still wrap the prompt; say so when
+        comparing it with a true chat seat. The prompt goes on stdin, not the command line, where `ps`
+        would show it.
+        """
+        work = tempfile.mkdtemp(prefix="rehearse-codex-chat-")
+        try:
+            session = CodexSession(self, Path(work), ["Read"], {**self.spec, "sandbox": "read-only"})
+            session._warned = True          # the sandbox warning is about agent subjects
+            try:
+                return session.send(system + "\n\n" + flatten(messages), via_stdin=True)
+            finally:
+                session.close()
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
 
 
 class _Home:
@@ -184,7 +202,7 @@ class CodexSession(AgentSession):
             what = "codex cannot limit which tools it uses; it may write anywhere in its work folder and run shell commands"
         return what + ". The work-folder check and the folder diff still apply."
 
-    def _argv(self, message: str, sandbox: str, fallback: list[str]) -> list[str]:
+    def _argv(self, message: str | None, sandbox: str, fallback: list[str]) -> list[str]:
         argv = [codex_bin(), "exec"]
         if self.session_id:
             argv.append("fork" if self._fork_next else "resume")
@@ -203,6 +221,8 @@ class CodexSession(AgentSession):
             argv += ["-c", setting]
         if self.session_id:
             argv.append(self.session_id)
+        if message is None:
+            return argv + ["-"]             # read the prompt from stdin
         if message.startswith("-"):
             argv.append("--")
         return argv + [message]
@@ -215,14 +235,15 @@ class CodexSession(AgentSession):
             env["OPENAI_API_KEY"] = self._api_key
         return env
 
-    def send(self, message: str) -> SeatResult:
+    def send(self, message: str, *, via_stdin: bool = False) -> SeatResult:
         if self._closed:
             raise BackendError("the session is closed")
         sandbox, fallback = self.sandbox(), self._fallback()
         if not self._warned:
             self._warned = True
             print(f"warning: {self.warning()}", file=sys.stderr)
-        raw = run_program(self._argv(message, sandbox, fallback), None, self.workdir,
+        raw = run_program(self._argv(None if via_stdin else message, sandbox, fallback),
+                          message if via_stdin else None, self.workdir,
                           float(self.options.get("timeout") or 900), self.backend.describe(),
                           program="codex", env_name="REHEARSE_CODEX_BIN", env=self._env())
         self._fork_next = False

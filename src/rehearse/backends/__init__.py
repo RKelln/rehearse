@@ -5,7 +5,7 @@
     http:MODEL@BASE_URL          any OpenAI-compatible endpoint
     openai:MODEL  openrouter:MODEL  deepseek[:MODEL]     http with the endpoint and key name filled in
     opencode:PROVIDER/MODEL      the `opencode` command line tool (agent seats)
-    codex[:model]                the `codex` command line tool (agent seats)
+    codex[:model]                the `codex` command line tool (agent seats; chat seats wrapped)
 """
 
 from __future__ import annotations

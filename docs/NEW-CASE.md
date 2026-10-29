@@ -9,9 +9,9 @@ the shortest path from "I have a prompt" to a first live run. Read [`DESIGN.md`]
 |---|---|---|
 | a prompt pasted into a plain chat | `chat` | The whole transcript is replayed each turn. Any chat backend (`claude`, `deepseek`, `openai`, `http`...). |
 | an agent working in a folder (reads files, writes files) | `agent` | Needs a backend that can resume a session: `claude`, `codex`, `opencode`. |
-| a prompt, but you want to test it through `codex` or `opencode` | `agent` | Those two cannot chat. Put the prompt in the variant folder as `AGENTS.md` (codex) or `CLAUDE.md`, with an empty `scenario/`. The agent's own built-in instructions wrap it, so say so in the case's comments. |
+| a prompt, but you want to test it through `codex` or `opencode` | `agent` | opencode cannot chat; codex can fill chat seats only through its agent wrapper. Put the prompt in the variant folder as `AGENTS.md` (codex) or `CLAUDE.md`, with an empty `scenario/`. The agent's own built-in instructions wrap it, so say so in the case's comments. |
 
-The sim and the judge are always chat seats, so they cannot be `codex` or `opencode`. To avoid spending
+The sim and the judge are always chat seats, so they cannot be `opencode`. `codex` can fill them through its agent wrapper (see BACKENDS.md), which is useful for a cross-vendor check. To avoid spending
 one vendor's subscription, run the subject on one backend and the sim and judge on a cheap API one such as
 `deepseek` (see [`BACKENDS.md`](BACKENDS.md)).
 
@@ -99,7 +99,7 @@ model, and run each continuation several times: one reply is an anecdote.
 
 ## Common mistakes
 
-- A `codex` or `opencode` seat in `[sims]` or `[judge]`: they are agent-only.
+- An `opencode` seat in `[sims]` or `[judge]`: it is agent-only. (`codex` works there, wrapped in its agent instructions.)
 - `uv run python -m unittest` with no arguments finds 0 tests; use `discover -s tests`.
 - Calling one run a result. One run is an anecdote; say "2 of 2", name the models, and say what was not tested.
 - Committing a run folder. Only `assessment.md` is committed, and it must carry no email address or home path.

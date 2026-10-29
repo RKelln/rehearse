@@ -68,7 +68,7 @@ class SpecTests(unittest.TestCase):
     def test_describe_and_capabilities(self):
         self.assertEqual(make_backend("codex:gpt-5").describe(), "codex:gpt-5")
         self.assertEqual(make_backend("codex").describe(), "codex")
-        self.assertEqual(make_backend("codex").capabilities, frozenset({"agent", "resume", "fork"}))
+        self.assertEqual(make_backend("codex").capabilities, frozenset({"chat", "agent", "resume", "fork"}))
 
     def test_sandbox_choice(self):
         self.assertEqual(sandbox_for(["Read", "Glob"]), "read-only")
@@ -395,3 +395,22 @@ class EndToEndTests(CodexCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChatTests(CodexCase):
+    def test_chat_seat_is_a_fresh_read_only_thread_with_the_prompt_on_stdin(self):
+        from rehearse.backends.base import Msg
+        fake = FakeCodex(self.root / "fakechat", [{"stdout": codex_events(texts=("I'm Sam.",))}])
+        fake.__enter__()
+        self.addCleanup(fake.__exit__)
+        r = make_backend("codex").chat("You are Sam. SECRET-FRAME", [Msg("user", "hi"), Msg("assistant", "hello"),
+                                                                      Msg("user", "who are you?")])
+        self.assertEqual(r.text, "I'm Sam.")
+        call = fake.calls[0]
+        self.assertEqual(call["argv"][-1], "-")
+        self.assertNotIn("SECRET-FRAME", " ".join(call["argv"]))
+        self.assertIn("SECRET-FRAME", call["stdin"])
+        self.assertIn("who are you?", call["stdin"])
+        self.assertIn('sandbox_mode="read-only"', configs(call["argv"]))
+        self.assertEqual(call["listing"] if "listing" in call else [], [])
+        self.assertFalse(Path(call["cwd"]).exists())       # the empty folder is removed afterwards
