@@ -7,3 +7,4 @@ __pycache__
 /.venv/
 /examples/agent-mock-case/runs/
 /examples/http-case/runs/
+/dist/

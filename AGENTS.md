@@ -14,10 +14,10 @@ Status: steps 1 to 3, 5, 6a, 6b and 6c built (core loop, checks, sim check, boar
 - **Python 3.11+, standard library only.** Run everything with `uv run`. No bare `pip`.
 - **Run the tests with `uv run python -m unittest discover -s tests`.**
 - **Test with the `mock` backend.** Unit tests never call a live model.
-- **Live model runs spend the owner's subscription.** Ask before any live run, keep it small, and
+- **Live model runs spend real money or quota.** Ask before any live run, keep it small, and
   report what it cost.
 - **Keep the docs generic.** This is a standalone tool. Do not name the projects, events or
-  organisations that use it in committed files. Context about them lives in `HANDOFF.md`, which is
+  organisations that use it in committed files. Private context, if any, goes in `HANDOFF.md`, which is
   gitignored.
 - **Scrub before writing.** Raw CLI output can carry the account's email address and local paths.
   Never commit either.

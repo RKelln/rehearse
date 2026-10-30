@@ -8,7 +8,7 @@ description: Set up and run a new rehearse case (a simulated-person test of a pr
 Follow `docs/NEW-CASE.md`; this is the checklist.
 
 1. Read `docs/DESIGN.md` (short) and `AGENTS.md`. Find any existing case for the project first
-   (`grep -ril` for the project name, look for a `rehearse/` folder, read `HANDOFF.md` if present). If
+   (`grep -ril` for the project name, look for a `rehearse/` folder, read `HANDOFF.md` if the project has one). If
    there is one, add a variant or sims to it instead of starting another.
 2. Get the **exact prompt** under test from the source of truth (the shipped file, not a paraphrase) and
    copy it into a new variant file. Confirm with `diff` that it is identical.

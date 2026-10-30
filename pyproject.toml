@@ -6,7 +6,23 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{ name = "Ryan Kelln" }]
+keywords = ["llm", "evaluation", "testing", "simulated-users", "prompts", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/RKelln/rehearse"
+Issues = "https://github.com/RKelln/rehearse/issues"
 
 [project.scripts]
 rehearse = "rehearse.cli:main"
